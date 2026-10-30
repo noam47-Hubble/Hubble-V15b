@@ -9,9 +9,9 @@
     { id: 'logistics_red', name: 'חם-אדום', a: '#A32D2D', b: '#F6D3D1' },
   ];
   const PRESETS = {
-    professional: ['לוח הודעות', 'לוח זמנים', 'רשימת דוברים', 'רשימת מציגים', 'רשימת נותני החסות', 'מפה', 'לינק לאתר האירוע', 'צור קשר'],
-    business: ['לוח הודעות', 'מוצרים ושירותים', 'שעות פעילות', 'מבצעים', 'מפה', 'לינק לאתר', 'צור קשר'],
-    social: ['לוח הודעות', 'תוכנית האירוע', 'מפה', 'לינק לקבוצה', 'צור קשר'],
+    professional: ['לוח שיתופי', 'לוח זמנים', 'רשימת דוברים', 'רשימת מציגים', 'רשימת נותני החסות', 'מפה', 'לינק לאתר האירוע', 'צור קשר'],
+    business: ['לוח שיתופי', 'מוצרים ושירותים', 'שעות פעילות', 'מבצעים', 'מפה', 'לינק לאתר', 'צור קשר'],
+    social: ['לוח שיתופי', 'תוכנית האירוע', 'מפה', 'לינק לקבוצה', 'צור קשר'],
   };
   /* per-type wording (spec section 22 a / b / c) */
   const CFG = {
@@ -122,19 +122,19 @@
       H.$('#tplName', pg).textContent = (TEMPLATES.find(t => t.id === st.template_id) || TEMPLATES[0]).name;
     }
 
-    /* info windows ("שדות רשות"): a default window is optional (none = all windows closed on entry) */
+    /* info windows ("שדות רשות"): one permanent-display window is optional (none = all windows closed on entry) */
     function renderBlocks() {
       if (st.blocks.filter(b => b.is_default).length > 1) { let seen = false; st.blocks.forEach(b => { if (b.is_default && seen) b.is_default = false; seen = seen || b.is_default; }); }
       const box = H.$('#stBlocks', pg); box.innerHTML = '';
       st.blocks.forEach(b => {
         const r = H.el(`<div class="row field-row"><span class="ico">${H.ic(H.iconForBlock(b), 20)}</span><span class="grow" style="font-weight:600">${esc(b.title)}</span>
           ${b.category === 'open' ? '<span class="tag">פתוח למשתמשים</span>' : ''}
-          <label class="chk" title="חלון שנפתח אוטומטית בכניסה להאב (לא חובה)"><input type="checkbox" data-def ${b.is_default ? 'checked' : ''}> ברירת מחדל</label>
-          <label class="chk" title="הסתר/הצג את הכפתור בהאב"><input type="checkbox" data-vis ${b.is_visible !== false ? 'checked' : ''}> מוצג</label>
+          <label class="chk" title="חלון אחד שמוצג תמיד לכל המשתמשים ואי אפשר לסגור אותו (לא חובה)"><input type="checkbox" data-def ${b.is_default ? 'checked' : ''}> תצוגה קבועה</label>
+          <label class="chk" title="הסתר/הצג את הכפתור בהאב"><input type="checkbox" data-vis ${b.is_visible !== false ? 'checked' : ''} ${b.is_default ? 'disabled' : ''}> מוצג</label>
           <button class="btn sm" data-a="edit">ערוך</button><button class="btn sm danger" data-a="del">מחק</button></div>`);
         H.$('[data-a=edit]', r).onclick = () => blockModal(b);
         H.$('[data-a=del]', r).onclick = () => { st.blocks = st.blocks.filter(x => x !== b); renderBlocks(); };
-        H.$('[data-def]', r).onchange = e => { st.blocks.forEach(x => x.is_default = false); b.is_default = e.target.checked; renderBlocks(); };
+        H.$('[data-def]', r).onchange = e => { st.blocks.forEach(x => x.is_default = false); b.is_default = e.target.checked; if (b.is_default) b.is_visible = true; renderBlocks(); };
         H.$('[data-vis]', r).onchange = e => { b.is_visible = e.target.checked; };
         box.appendChild(r);
       });

@@ -19,7 +19,7 @@ from flask_socketio import SocketIO, join_room, leave_room, emit
 
 from models import (
     db, User, Card, CardPhoto, Hub, HubBlock, HubOpenPost, Favorite, HubPresence, HubBan,
-    BoardMessage, PrivateMessage, ContactGroup, ContactShare, ContactGroupMember,
+    BoardMessage, PrivateMessage, ContactGroup, ContactShare, ContactGroupMember, GroupMembership,
     CARD_FIELD_NAMES, VIEWER_NAME, gen_hub_serial, gen_presence_code,
 )
 
@@ -82,6 +82,8 @@ BOARD_LIMIT = 100
 # In-memory socket bookkeeping (single process demo)
 SID_TO_USER = {}
 SID_TO_HUB = {}
+RECENT_HUB = {}      # user_id -> (hub_id, ts): connection dropped (phone in pocket) without leaving the hub
+RECENT_TTL = 15 * 60
 USER_SIDS = {}
 
 
@@ -172,6 +174,20 @@ def index():
     return render_template("index.html", v=APP_VERSION)
 
 
+@app.after_request
+def no_cache_shell(resp):
+    # the app shell must always come from the server (a cached page would skip the password prompt)
+    if request.path == "/":
+        resp.headers["Cache-Control"] = "no-store, max-age=0"
+    return resp
+
+
+@app.route("/api/lock", methods=["POST"])
+def lock_now():
+    session.pop("unlocked", None)
+    return jsonify({"ok": True})
+
+
 @app.route("/healthz")
 def healthz():
     return "ok"
@@ -193,9 +209,9 @@ def merge_user_into(source, target):
 
 
 DEFAULT_PREFS = {
-    "sound_pm": True, "sound_hub_msg": True, "sound_hub_join": False, "sound_invite": True,
+    "sound_pm": True, "sound_hub_msg": True, "sound_hub_join": False, "sound_invite": True, "sound_app_open": True, "sound_hub_enter": True, "sound_send": True,
     "hubs_view": "list", "contacts_view": "list", "groups_view": "list", "lang": "he",
-    "hub_people_view": "list", "skip_cards": [],
+    "hub_people_view": "list", "messages_view": "list", "skip_cards": [], "tour_seen": False,
 }
 THEMES = ("space", "light")
 
@@ -241,7 +257,7 @@ def me_payload(user):
         "active_card": active.full_dict() if active else None,
         "unread": PrivateMessage.query.filter_by(to_user_id=user.id, is_read=False).count(),
         "theme": user.theme or "space", "prefs": user_prefs(user), "has_password": bool(user.pw_hash),
-        "is_super": bool(user.is_super), "locked": False,
+        "is_super": bool(user.is_super), "is_admin": bool(user.is_super or is_hub_admin(user.id)), "locked": False,
     }
 
 
@@ -405,6 +421,36 @@ def super_claim():
     return jsonify({"ok": True})
 
 
+@app.route("/api/admin/demo", methods=["POST", "DELETE"])
+def admin_demo():
+    """Load / remove the sample hubs (9 hubs, random registrants). Only for admins; the hubs belong to the caller."""
+    if not (g.user.is_super or is_hub_admin(g.user.id)):
+        return err("אין הרשאה", 403)
+    import demo
+    if request.method == "DELETE":
+        return jsonify({"ok": True, "removed": demo.clear(g.user)})
+    if Hub.query.filter_by(is_demo=True, owner_user_id=g.user.id).count():
+        return err("האבי הדוגמה כבר טעונים. מחק אותם לפני טעינה מחדש", 409)
+    try:
+        return jsonify({"ok": True, "hubs": demo.seed(g.user)})
+    except ValueError as e:
+        db.session.rollback()
+        return err(str(e), 400)
+
+
+@app.route("/api/admin/event-hub", methods=["POST"])
+def admin_event_hub():
+    """Create the real 'Mare MED IV' hub for the calling admin (content + images from static/events/maremed)."""
+    if not (g.user.is_super or is_hub_admin(g.user.id)):
+        return err("אין הרשאה", 403)
+    import demo
+    try:
+        return jsonify({"ok": True, "hub": demo.load_maremed(g.user)})
+    except ValueError as e:
+        db.session.rollback()
+        return err(str(e), 409 if "קיים" in str(e) else 400)
+
+
 @app.route("/api/super/stats")
 def super_stats():
     if not g.user.is_super:
@@ -470,8 +516,7 @@ def create_card():
     d = request.get_json(force=True)
     if d.get("type") not in ("business", "social"):
         return err("סוג כרטיס לא תקין")
-    if not (d.get("name") or "").strip():
-        return err("שם הוא שדה חובה")
+    # the name is optional (it may be hidden: the card is then a "viewer" card)
     card = Card(user_id=g.user.id, card_type=d["type"])
     apply_card_fields(card, d)
     if not card.card_name:
@@ -498,8 +543,6 @@ def update_card(card_id):
     if not card:
         return err("לא נמצא", 404)
     d = request.get_json(force=True)
-    if "name" in d and not (d.get("name") or "").strip():
-        return err("שם הוא שדה חובה")
     apply_card_fields(card, d)
     if "photos" in d and isinstance(d["photos"], list):
         CardPhoto.query.filter_by(card_id=card.id).delete()
@@ -541,6 +584,12 @@ def activate_card(card_id):
     card = Card.query.filter_by(id=card_id, user_id=g.user.id).first()
     if not card:
         return err("לא נמצא", 404)
+    if card.card_type != "business":
+        # a professional hub cannot be used with a social card
+        for hid in {SID_TO_HUB.get(sid) for sid in USER_SIDS.get(g.user.id, set())} - {None}:
+            hb = Hub.query.get(hid)
+            if hb and hb.hub_type == "professional" and not is_mgr(hb, g.user.id):
+                return err("לא ניתן להיות בהאב מקצועי עם כרטיס חברתי. צא מההאב כדי להחליף כרטיס")
     Card.query.filter_by(user_id=g.user.id).update({Card.is_active: False})
     card.is_active = True
     db.session.commit()
@@ -594,7 +643,7 @@ def verify_physical(hub, lat=None, lng=None, acc=None, code=None, ip=None):
 
 
 def phys_now(p):
-    return bool(p.is_physical and p.is_live and (time.time() - (p.physical_ts or 0)) < PHYSICAL_TTL)
+    return bool(p.is_physical and (p.is_live or p.demo) and (time.time() - (p.physical_ts or 0)) < PHYSICAL_TTL)
 
 
 def user_state(user_id):
@@ -603,6 +652,11 @@ def user_state(user_id):
     open_ = bool(card and card.effective_open())
     sids = USER_SIDS.get(user_id, set())
     if not sids:
+        rec = RECENT_HUB.get(user_id)
+        if rec and time.time() - rec[1] < RECENT_TTL:
+            hub = Hub.query.get(rec[0])
+            if hub and hub.is_open:
+                return {"open": open_, "state": "hub", "hub_name": hub.name}
         return {"open": open_, "state": "off", "hub_name": ""}
     for sid in sids:
         hid = SID_TO_HUB.get(sid)
@@ -760,7 +814,7 @@ def emit_pending(hub, allp=None, names=None):
 def pm_dict(m, me_id):
     return {
         "id": m.id, "from_user_id": m.from_user_id, "to_user_id": m.to_user_id,
-        "mine": m.from_user_id == me_id, "text": m.text, "image": m.image_url, "ts": m.ts,
+        "mine": m.from_user_id == me_id, "text": m.text, "image": m.image_url, "ts": m.ts, "file_name": (m.file_name or "") if m.file_url else "",
         "kind": m.kind, "group_name": m.group_name, "group_id": m.group_id, "sender_name": m.sender_name,
         "hub_id": m.hub_id, "hub_name": m.hub_name, "hub_link_id": m.hub_link_id,
         "is_read": m.is_read,
@@ -774,7 +828,7 @@ def banned_from_owner(sender_id, recipient_id):
     return q.first() is not None
 
 
-def create_pm(from_id, to_id, text, image="", kind="normal", group_name="", hub=None, sender_card=None, hub_link_id=None, group_id=None):
+def create_pm(from_id, to_id, text, image="", kind="normal", group_name="", hub=None, sender_card=None, hub_link_id=None, group_id=None, file_url="", file_name=""):
     card = sender_card or get_active_card(from_id)
     snap = card.public_dict() if card else {}
     sender = User.query.get(from_id)
@@ -782,7 +836,7 @@ def create_pm(from_id, to_id, text, image="", kind="normal", group_name="", hub=
         from_user_id=from_id, to_user_id=to_id, text=text, image_url=image, kind=kind,
         group_name=group_name, hub_id=hub.id if hub else None, hub_name=hub.name if hub else "",
         sender_name=(card.display_name() if card else (sender.reg_name if sender else VIEWER_NAME)),
-        card_snapshot=snap, is_read=False, group_id=group_id,
+        card_snapshot=snap, is_read=False, group_id=group_id, file_url=file_url, file_name=file_name,
     )
     pm.hub_link_id = hub_link_id
     db.session.add(pm)
@@ -902,25 +956,39 @@ def gkey(m):
 
 @app.route("/api/messages/groups")
 def message_groups():
-    """Group conversations I take part in (as owner or as a member), plus my own groups even if still silent."""
+    """Group conversations I take part in (owner, member, or invited and not yet answered)."""
     uid = g.user.id
-    msgs = (PrivateMessage.query.filter(PrivateMessage.kind == "group",
-            db.or_(PrivateMessage.to_user_id == uid, PrivateMessage.from_user_id == uid)).order_by(PrivateMessage.ts).all())
-    by = {}
-    for m in msgs:
-        by.setdefault(gkey(m), []).append(m)
     rows = []
-    for key, ms in by.items():
+    gids = my_groups_ids(uid)
+    for gid_ in gids:
+        gr = ContactGroup.query.get(gid_)
+        st = group_status(gr, uid)
+        if not st:
+            continue
+        ms = [] if st == "pending" else (PrivateMessage.query.filter(PrivateMessage.kind == "group", db.or_(PrivateMessage.group_id == gid_, db.and_(PrivateMessage.group_id.is_(None), PrivateMessage.group_name == gr.name)),
+              db.or_(PrivateMessage.to_user_id == uid, PrivateMessage.from_user_id == uid)).order_by(PrivateMessage.ts).all())
+        last = ms[-1] if ms else None
+        inv = GroupMembership.query.filter_by(group_id=gid_, user_id=uid).first() if st == "pending" else None
+        rows.append({"group_id": gid_, "key": gid_, "group_name": gr.name, "image": gr.image or "", "description": gr.description or "",
+                     "status": st, "is_owner": st == "owner",
+                     "last_text": (last.text or ("📷 תמונה" if last.image_url else "")) if last else ("הוזמנת להצטרף — ממתין לאישור שלך" if st == "pending" else ""),
+                     "last_sender": ("אני" if last.from_user_id == uid else last.sender_name) if last else "",
+                     "ts": last.ts if last else (inv.invited_ts if inv else gr.created_at or 0),
+                     "unread": sum(1 for m in ms if m.to_user_id == uid and not m.is_read) + (1 if st == "pending" else 0)})
+    # messages from before groups had ids: one row per group name
+    old = (PrivateMessage.query.filter(PrivateMessage.kind == "group", PrivateMessage.group_id.is_(None),
+           db.or_(PrivateMessage.to_user_id == uid, PrivateMessage.from_user_id == uid)).order_by(PrivateMessage.ts).all())
+    names = {r["group_name"] for r in rows}
+    by = {}
+    for m in old:
+        if m.group_name not in names:
+            by.setdefault(m.group_name or "", []).append(m)
+    for name, ms in by.items():
         last = ms[-1]
-        gr = ContactGroup.query.get(last.group_id) if last.group_id else None
-        rows.append({"group_id": last.group_id or "", "key": key, "group_name": gr.name if gr else last.group_name,
-                     "image": gr.image if gr else "", "last_text": last.text or ("📷 תמונה" if last.image_url else ""),
+        rows.append({"group_id": "", "key": "n:" + name, "group_name": name, "image": "", "description": "", "status": "active", "is_owner": False,
+                     "last_text": last.text or ("📷 תמונה" if last.image_url else ""),
                      "last_sender": "אני" if last.from_user_id == uid else last.sender_name, "ts": last.ts,
                      "unread": sum(1 for m in ms if m.to_user_id == uid and not m.is_read)})
-    have = {r["group_id"] for r in rows}
-    for gr in ContactGroup.query.filter_by(owner_user_id=uid).all():
-        if gr.id not in have:
-            rows.append({"group_id": gr.id, "key": gr.id, "group_name": gr.name, "image": gr.image, "last_text": "", "last_sender": "", "ts": 0, "unread": 0})
     rows.sort(key=lambda r: -r["ts"])
     return jsonify(rows[:100])
 
@@ -930,8 +998,15 @@ def group_thread():
     uid = g.user.id
     gid = request.args.get("id", "")
     name = request.args.get("name", "")
+    gr = ContactGroup.query.get(gid) if gid else None
+    st = group_status(gr, uid) if gr else None
+    if gid and st not in ("owner", "active"):
+        return jsonify({"messages": [], "group_name": gr.name if gr else name, "group_id": gid, "can_send": False, "status": st or "none"})
     q = PrivateMessage.query.filter(PrivateMessage.kind == "group", db.or_(PrivateMessage.to_user_id == uid, PrivateMessage.from_user_id == uid))
-    q = q.filter(PrivateMessage.group_id == gid) if gid else q.filter(PrivateMessage.group_name == name)
+    if gid:
+        q = q.filter(db.or_(PrivateMessage.group_id == gid, db.and_(PrivateMessage.group_id.is_(None), PrivateMessage.group_name == gr.name)))
+    else:
+        q = q.filter(PrivateMessage.group_name == name, PrivateMessage.group_id.is_(None))
     ms = q.order_by(PrivateMessage.ts).all()
     # one outgoing message is stored once per recipient: show it once
     seen, out, changed = set(), [], False
@@ -948,14 +1023,13 @@ def group_thread():
     if changed:
         db.session.commit()
         emit_to_user(uid, "unread_changed", {})
-    gr = ContactGroup.query.get(gid) if gid else None
-    can_send = bool(gid) and bool(gr) and (gr.owner_user_id == uid or any(not o["mine"] for o in out))
-    return jsonify({"messages": out[-100:], "group_name": gr.name if gr else name, "group_id": gid, "can_send": can_send})
+    can_send = bool(gr) and st in ("owner", "active")
+    return jsonify({"messages": out[-100:], "group_name": gr.name if gr else name, "group_id": gid, "can_send": can_send, "status": st or "active"})
 
 
 @app.route("/api/messages/group-send", methods=["POST"])
 def group_send():
-    """Write to a whole group conversation (owner or any member who received a group message): everyone sees it."""
+    """Write to a whole group conversation (owner or accepted member): everyone sees it."""
     uid = g.user.id
     d = request.get_json(force=True) or {}
     gr = ContactGroup.query.get(d.get("group_id") or "")
@@ -965,8 +1039,7 @@ def group_send():
     image = d.get("image") or ""
     if not text and not image:
         return err("נא להזין הודעה")
-    member = gr.owner_user_id == uid or PrivateMessage.query.filter_by(kind="group", group_id=gr.id, to_user_id=uid).first() is not None
-    if not member:
+    if group_status(gr, uid) not in ("owner", "active"):
         return err("אינך חבר בקבוצה", 403)
     my = get_active_card(uid)
     if not my or not my.effective_open():
@@ -984,6 +1057,67 @@ def group_send():
         # nobody could receive it: keep a copy for the sender so the conversation shows it
         push_pm(create_pm(uid, uid, text, image=image, kind="group", group_name=gr.name, group_id=gr.id))
     return jsonify({"ok": True, "sent": sent})
+
+
+@app.route("/api/groups/<gid>")
+def group_detail(gid):
+    """A group's card: details + who is in it (accepted members and the founder)."""
+    uid = g.user.id
+    gr = ContactGroup.query.get(gid)
+    st = group_status(gr, uid)
+    if not gr or not st:
+        return err("לא נמצא", 404)
+    pend = pending_user_ids(gr.id)
+    members = []
+    oc = get_active_card(gr.owner_user_id)
+    ob = person_brief(gr.owner_user_id)
+    members.append({**ob, "card": oc.public_dict() if oc and oc.effective_open() else {}, "is_founder": True, "pending": False})
+    for s in group_contacts_all(gr.id):
+        is_p = s.from_user_id in pend
+        if is_p and st != "owner":
+            continue
+        snap = s.card_snapshot or {}
+        if s.from_user_id == uid:
+            c = get_active_card(uid)
+            snap = c.public_dict() if c else snap
+        b = person_brief(s.from_user_id, snapshot=snap)
+        members.append({**b, "card": snap, "is_founder": False, "pending": is_p, "contact_id": s.id if st == "owner" else None})
+    return jsonify({"id": gr.id, "name": gr.name, "description": gr.description or "", "image": gr.image or "",
+                    "status": st, "is_owner": st == "owner", "founder_name": ob["name"], "founder_id": gr.owner_user_id, "members": members})
+
+
+@app.route("/api/groups/<gid>/respond", methods=["POST"])
+def group_respond(gid):
+    uid = g.user.id
+    gr = ContactGroup.query.get(gid)
+    row = GroupMembership.query.filter_by(group_id=gid, user_id=uid, status="pending").first()
+    if not gr or not row:
+        return err("אין הזמנה ממתינה", 404)
+    accept = bool((request.get_json(force=True) or {}).get("accept"))
+    me = user_label(uid)
+    if accept:
+        row.status = "active"
+        db.session.commit()
+        notify_system(uid, gr.owner_user_id, f"{me} אישר/ה את ההצטרפות לקבוצה {gr.name}", gr.id)
+    else:
+        drop_member(gr, uid)
+        notify_system(uid, gr.owner_user_id, f"{me} דחה/תה את ההצטרפות לקבוצה {gr.name} והוסר/ה מהקבוצה", gr.id)
+    emit_to_user(gr.owner_user_id, "groups_changed", {})
+    emit_to_user(uid, "groups_changed", {})
+    return jsonify({"ok": True, "accepted": accept})
+
+
+@app.route("/api/groups/<gid>/leave", methods=["POST"])
+def group_leave(gid):
+    uid = g.user.id
+    gr = ContactGroup.query.get(gid)
+    if not gr or group_status(gr, uid) != "active":
+        return err("אינך חבר בקבוצה", 404)
+    drop_member(gr, uid)
+    notify_system(uid, gr.owner_user_id, f"{user_label(uid)} עזב/ה את הקבוצה {gr.name}", gr.id)
+    emit_to_user(gr.owner_user_id, "groups_changed", {})
+    emit_to_user(uid, "groups_changed", {})
+    return jsonify({"ok": True})
 
 
 @app.route("/api/messages/unread-count")
@@ -1075,6 +1209,67 @@ def contacts_payload(user):
     return out
 
 
+@app.route("/api/people/hubs")
+def people_hubs():
+    """Hubs I am (or was) a member of — a source for finding people to add."""
+    ids = {p.hub_id for p in HubPresence.query.filter_by(user_id=g.user.id, approval_status="approved").all()}
+    ids |= {h.id for h in Hub.query.filter_by(owner_user_id=g.user.id).all()}
+    hubs = [Hub.query.get(i) for i in ids]
+    return jsonify([{"id": h.id, "name": h.name, "serial": h.serial} for h in hubs if h])
+
+
+@app.route("/api/people/search")
+def people_search():
+    """Find registered people open to communication: by name, by phone/email, or from one of my hubs."""
+    me = g.user.id
+    mode = request.args.get("mode", "name")
+    q = (request.args.get("q") or "").strip()
+    have = {s.from_user_id for s in ContactShare.query.filter_by(owner_user_id=me).all()}
+    uids = []
+    if mode == "id":
+        if len(q) < 4:
+            return jsonify([])
+        if "@" in q:
+            u = User.query.filter(db.func.lower(User.email) == q.lower()).first()
+        else:
+            u = User.query.filter_by(phone=norm_phone(q)).first()
+        uids = [u.id] if u else []
+    elif mode == "hub":
+        hid = request.args.get("hub_id", "")
+        hub = Hub.query.get(hid)
+        mine = hub and (hub.owner_user_id == me or HubPresence.query.filter_by(hub_id=hid, user_id=me, approval_status="approved").first())
+        if not mine:
+            return err("אין גישה להאב", 403)
+        uids = [p.user_id for p in HubPresence.query.filter_by(hub_id=hid, approval_status="approved").all()]
+        if hub.owner_user_id not in uids:
+            uids.append(hub.owner_user_id)
+    else:
+        if len(q) < 2:
+            return jsonify([])
+        ql = q.lower()
+        for c in Card.query.filter_by(is_active=True).all():
+            hay = ((c.name if c.name_visible else "") + " " + (c.nickname if c.nickname_visible else "")).lower()
+            if ql in hay:
+                uids.append(c.user_id)
+            if len(uids) >= 40:
+                break
+    out = []
+    for uid in uids:
+        if uid == me:
+            continue
+        c = get_active_card(uid)
+        if mode == "hub":
+            pr = HubPresence.query.filter_by(hub_id=request.args.get("hub_id", ""), user_id=uid).first()
+            c = (Card.query.get(pr.card_id) if pr else None) or c
+        if not c or not c.effective_open():
+            continue
+        snap = c.public_dict()
+        b = person_brief(uid, snapshot=snap)
+        out.append({"user_id": uid, "name": b["name"], "photo": b["photo"], "desc": b["desc"], "company": b["company"],
+                    "card": snap, "is_contact": uid in have})
+    return jsonify(out)
+
+
 @app.route("/api/contacts", methods=["GET"])
 def list_contacts():
     rows = contacts_payload(g.user)
@@ -1129,7 +1324,9 @@ def groups_payload(user):
     out = []
     for gr in ContactGroup.query.filter_by(owner_user_id=user.id).order_by(ContactGroup.created_at).all():
         ids = [m.contact_id for m in ContactGroupMember.query.filter_by(group_id=gr.id).all()]
-        out.append({"id": gr.id, "name": gr.name, "contact_ids": ids,
+        pend = pending_user_ids(gr.id)
+        pids = [m.contact_id for m in ContactGroupMember.query.filter_by(group_id=gr.id).all() if (ContactShare.query.get(m.contact_id) and ContactShare.query.get(m.contact_id).from_user_id in pend)]
+        out.append({"id": gr.id, "name": gr.name, "contact_ids": ids, "pending_ids": pids,
                     "description": gr.description or "", "image": gr.image or ""})
     return out
 
@@ -1179,7 +1376,10 @@ def delete_group(gid):
     gr = own_group(gid)
     if not gr:
         return err("לא נמצא", 404)
+    for m in group_contacts_all(gid):
+        emit_to_user(m.from_user_id, "groups_changed", {})
     ContactGroupMember.query.filter_by(group_id=gid).delete()
+    GroupMembership.query.filter_by(group_id=gid).delete()
     db.session.delete(gr)
     db.session.commit()
     return jsonify({"ok": True})
@@ -1191,28 +1391,93 @@ def add_group_members(gid):
     if not gr:
         return err("לא נמצא", 404)
     added = 0
+    inviter = user_label(g.user.id)
     for cid in (request.get_json(force=True) or {}).get("contact_ids", []):
-        if not ContactShare.query.filter_by(id=cid, owner_user_id=g.user.id).first():
+        s = ContactShare.query.filter_by(id=cid, owner_user_id=g.user.id).first()
+        if not s:
             continue
         if not ContactGroupMember.query.filter_by(group_id=gid, contact_id=cid).first():
             db.session.add(ContactGroupMember(group_id=gid, contact_id=cid))
             added += 1
+            if s.from_user_id != g.user.id and not GroupMembership.query.filter_by(group_id=gid, user_id=s.from_user_id).first():
+                db.session.add(GroupMembership(group_id=gid, user_id=s.from_user_id, status="pending"))
+                db.session.commit()
+                notify_system(g.user.id, s.from_user_id, f"צורפת לקבוצה {gr.name} על ידי {inviter}. אנא אשר/י בלשונית ״קבוצות״ — ״צרף אותי״ או ״דחה הצטרפות״.", gr.id)
+                emit_to_user(s.from_user_id, "groups_changed", {})
     db.session.commit()
     return jsonify({"ok": True, "added": added})
 
 
 @app.route("/api/contact-groups/<gid>/members/<cid>", methods=["DELETE"])
 def remove_group_member(gid, cid):
-    if not own_group(gid):
+    gr = own_group(gid)
+    if not gr:
         return err("לא נמצא", 404)
+    s = ContactShare.query.filter_by(id=cid, owner_user_id=g.user.id).first()
     ContactGroupMember.query.filter_by(group_id=gid, contact_id=cid).delete()
+    if s:
+        GroupMembership.query.filter_by(group_id=gid, user_id=s.from_user_id).delete()
+        notify_system(g.user.id, s.from_user_id, f"הוסרת מהקבוצה {gr.name}", gr.id)
+        emit_to_user(s.from_user_id, "groups_changed", {})
     db.session.commit()
     return jsonify({"ok": True})
 
 
-def group_contacts(gid):
+def group_contacts_all(gid):
     ids = [m.contact_id for m in ContactGroupMember.query.filter_by(group_id=gid).all()]
     return [ContactShare.query.get(i) for i in ids if ContactShare.query.get(i)]
+
+
+def pending_user_ids(gid):
+    return {m.user_id for m in GroupMembership.query.filter_by(group_id=gid, status="pending").all()}
+
+
+def group_contacts(gid):
+    """Members who have accepted (legacy members without an invitation count as accepted)."""
+    pend = pending_user_ids(gid)
+    return [s for s in group_contacts_all(gid) if s.from_user_id not in pend]
+
+
+def group_status(gr, uid):
+    """'owner' | 'active' | 'pending' | None."""
+    if not gr:
+        return None
+    if gr.owner_user_id == uid:
+        return "owner"
+    row = GroupMembership.query.filter_by(group_id=gr.id, user_id=uid).first()
+    if row:
+        return row.status
+    for s in group_contacts_all(gr.id):
+        if s.from_user_id == uid:
+            return "active"          # members added before invitations existed
+    return None
+
+
+def my_groups_ids(uid):
+    """Group ids I own or belong to (pending included)."""
+    ids = {x.id for x in ContactGroup.query.filter_by(owner_user_id=uid).all()}
+    ids |= {m.group_id for m in GroupMembership.query.filter_by(user_id=uid).all()}
+    contact_ids = [s.id for s in ContactShare.query.filter_by(from_user_id=uid).all()]
+    if contact_ids:
+        ids |= {m.group_id for m in ContactGroupMember.query.filter(ContactGroupMember.contact_id.in_(contact_ids)).all()}
+    return ids
+
+
+def drop_member(gr, uid):
+    """Remove a user from a group (decline, leave or removal by the owner)."""
+    GroupMembership.query.filter_by(group_id=gr.id, user_id=uid).delete()
+    for s in ContactShare.query.filter_by(owner_user_id=gr.owner_user_id, from_user_id=uid).all():
+        ContactGroupMember.query.filter_by(group_id=gr.id, contact_id=s.id).delete()
+    db.session.commit()
+
+
+def user_label(uid):
+    c = get_active_card(uid)
+    return c.display_name() if c else VIEWER_NAME
+
+
+def notify_system(from_id, to_id, text, group_id=None):
+    push_pm(create_pm(from_id, to_id, text, kind="system", group_id=group_id))
 
 
 @app.route("/api/contact-groups/<gid>/where")
@@ -1273,6 +1538,7 @@ def hub_owner_card(hub):
 
 def activity_for(hub):
     live = HubPresence.query.filter_by(hub_id=hub.id, is_live=True, approval_status="approved").count()
+    live += HubPresence.query.filter_by(hub_id=hub.id, is_live=False, demo=True, is_physical=True, approval_status="approved").count()
     since = time.time() - 3600
     msgs = BoardMessage.query.filter(BoardMessage.hub_id == hub.id, BoardMessage.ts > since).count()
     lv_people = 0 if live <= 10 else (1 if live <= 20 else 2)
@@ -1280,14 +1546,21 @@ def activity_for(hub):
     return {"live_count": live, "msgs_last_hour": msgs, "level": max(lv_people, lv_msgs)}
 
 
-def hub_row(hub, user, fav_ids, lat=None, lng=None):
+def hub_row(hub, user, fav_ids, lat=None, lng=None, rng=None):
     d = hub.public_dict(hub_owner_card(hub))
     d.update(activity_for(hub))
     d["is_favorite"] = hub.id in fav_ids
     d["is_mine"] = is_mgr(hub, user.id)
     near = bool(hub.owner_public_ip) and hub.owner_public_ip == client_ip()
     if lat is not None and lng is not None and hub.loc_lat is not None:
-        near = near or haversine(lat, lng, hub.loc_lat, hub.loc_lng) <= max(hub.loc_radius or 150, 1000)
+        dist = haversine(lat, lng, hub.loc_lat, hub.loc_lng)
+        d["dist"] = int(dist)
+        if rng:      # the user chose a search radius: only hubs with a defined location, within that radius
+            near = dist <= rng
+        else:
+            near = near or dist <= max(hub.loc_radius or 150, 1000)
+    elif rng:
+        near = False
     d["is_near"] = near
     return d
 
@@ -1299,12 +1572,13 @@ def list_hubs():
     q = (request.args.get("q") or "").strip().lower()
     lat = request.args.get("lat", type=float)
     lng = request.args.get("lng", type=float)
+    rng = request.args.get("range", type=int)
     hubs = [h for h in Hub.query.filter_by(is_open=True).order_by(Hub.created_at.desc()).all()
             if h.is_published is not False or h.owner_user_id == user.id]
     fav_ids = {f.hub_id for f in Favorite.query.filter_by(user_id=user.id).all()}
     rows = []
     for h in hubs:
-        r = hub_row(h, user, fav_ids, lat, lng)
+        r = hub_row(h, user, fav_ids, lat, lng, rng if scope == "near" else None)
         if scope == "mine" and not r["is_mine"]:
             continue
         if scope == "favorites" and not r["is_favorite"]:
@@ -1314,6 +1588,8 @@ def list_hubs():
         if q and not (q in h.name.lower() or q == (h.serial or "") or q in (r["owner_name"] or "").lower()):
             continue
         rows.append(r)
+    if scope == "near" and rng:
+        rows.sort(key=lambda r: r.get("dist", 10**9))
     return jsonify(rows)
 
 
@@ -1482,6 +1758,7 @@ def update_hub(hub_id):
 def hub_counts(hub):
     reg = HubPresence.query.filter_by(hub_id=hub.id, approval_status="approved").count()
     live = HubPresence.query.filter_by(hub_id=hub.id, approval_status="approved", is_live=True).count()
+    live += HubPresence.query.filter_by(hub_id=hub.id, approval_status="approved", is_live=False, demo=True, is_physical=True).count()
     return reg, live
 
 
@@ -1498,7 +1775,8 @@ def hub_card(hub_id):
     return jsonify({"hub_id": hub.id, "name": hub.name, "tagline": hub.tagline if hub.tagline_visible else "",
                     "has_card": bool(hub.card_enabled), "bg": bg or "", "bg_kind": kind, "song": hub.card_song_url or "",
                     "message": hub.card_message or "", "registered": reg, "present": live, "is_favorite": fav,
-                    "skip": hub.id in user_prefs(g.user).get("skip_cards", []), "hub_type": hub.hub_type})
+                    "skip": hub.id in user_prefs(g.user).get("skip_cards", []), "hub_type": hub.hub_type,
+                    "organizers": (hub.organizer_names or "") if getattr(hub, "organizer_names_visible", True) is not False else ""})
 
 
 @app.route("/api/hubs/<hub_id>/card-pref", methods=["POST"])
@@ -1632,16 +1910,43 @@ def share_hub(hub_id):
     if not my or not my.effective_open():
         return err("הכרטיס שלך סגור לתקשורת", 403)
     name = my.display_name()
+    images = [i for i in (d.get("images") or []) if isinstance(i, str) and i.startswith("data:image/") and len(i) < 3_500_000][:4]
+    fdata = d.get("file") if isinstance(d.get("file"), str) and d.get("file").startswith("data:application/pdf") and len(d["file"]) < 7_500_000 else ""
+    fname = (d.get("file_name") or "report.pdf")[:80] if fdata else ""
+    extra = (d.get("text") or "").strip()[:300]
     sent = 0
     for uid in targets:
         rc = get_active_card(uid)
         if not rc or not rc.effective_open():
             continue
-        pm = create_pm(g.user.id, uid, f"הוזמנת על ידי {name} להיכנס להאב {hub.name} (#{hub.serial})",
-                       hub=hub, hub_link_id=hub.id)
+        head = f"הוזמנת על ידי {name} להיכנס להאב {hub.name} (#{hub.serial})"
+        if images or fdata:
+            what = 'את הדו"ח' if fdata else 'תכולה'
+            head = f"{name} שיתף/ה איתך {what} מההאב {hub.name} (#{hub.serial})"
+        if extra:
+            head += "\n" + extra
+        pm = create_pm(g.user.id, uid, head, image=images[0] if images else "", hub=hub, hub_link_id=hub.id,
+                       file_url=fdata, file_name=fname)
         push_pm(pm)
+        for im in images[1:]:
+            push_pm(create_pm(g.user.id, uid, f"{hub.name} — תכולה", image=im, hub=hub))
         sent += 1
     return jsonify({"ok": True, "sent": sent})
+
+
+@app.route("/api/messages/<mid>/file")
+def message_file(mid):
+    m = PrivateMessage.query.get(mid)
+    if not m or not m.file_url or g.user.id not in (m.from_user_id, m.to_user_id):
+        return err("לא נמצא", 404)
+    import base64
+    head, _, b64 = m.file_url.partition(",")
+    mime = head[5:].split(";")[0] or "application/octet-stream"
+    from flask import Response
+    from urllib.parse import quote
+    resp = Response(base64.b64decode(b64), mimetype=mime)
+    resp.headers["Content-Disposition"] = "attachment; filename*=UTF-8''" + quote(m.file_name or "file")
+    return resp
 
 
 def blocks_for(hub, owner):
@@ -1808,6 +2113,7 @@ def on_disconnect():
     if not sids:
         USER_SIDS.pop(uid, None)
     if hub_id and not any(SID_TO_HUB.get(s) == hub_id for s in sids):
+        RECENT_HUB[uid] = (hub_id, time.time())
         pr = HubPresence.query.filter_by(hub_id=hub_id, user_id=uid).first()
         if pr:
             pr.is_live = False
@@ -1822,6 +2128,7 @@ def on_leave_hub(data=None):
     if hub_id:
         leave_room(f"hub:{hub_id}")
         if uid and not any(SID_TO_HUB.get(s) == hub_id for s in USER_SIDS.get(uid, set())):
+            RECENT_HUB.pop(uid, None)
             pr = HubPresence.query.filter_by(hub_id=hub_id, user_id=uid).first()
             if pr:
                 pr.is_live = False
@@ -1879,6 +2186,7 @@ def on_join_hub(data):
     join_room(f"hub:{hub.id}")
     SID_TO_USER[request.sid] = user.id
     SID_TO_HUB[request.sid] = hub.id
+    RECENT_HUB.pop(user.id, None)
     USER_SIDS.setdefault(user.id, set()).add(request.sid)
 
     now = time.time()

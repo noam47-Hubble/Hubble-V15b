@@ -13,7 +13,7 @@ H.routes.home = async (p, root) => {
           <input class="search" id="hmQ" type="text" placeholder="חיפוש האב לפי שם, מספר או בעל ההאב">
           <div class="fbar" id="hmFilters" style="margin:10px 0 0">
             <span class="pill active" data-f="all">הכל</span><span class="pill" data-f="favorites">מועדפים</span>
-            <span class="pill" data-f="near">קרובים</span><span class="pill" data-f="mine">שלי</span><span class="sp"></span>
+            <span class="pill" data-f="near">קרובים</span><span class="pill" data-f="mine">שלי</span><span class="pill" id="hmType">סוג</span><span class="sp"></span>
             <button class="t-icon-btn" id="hmVg" title="ריבועים">${H.ic('grid', 18)}</button><button class="t-icon-btn" id="hmVl" title="שורות">${H.ic('list', 18)}</button>
           </div>
         </div>
@@ -52,7 +52,7 @@ H.routes.home = async (p, root) => {
   document.addEventListener('click', docClick);
 
   /* list */
-  let filter = 'all', q = '', pos = null, rows = [], timer = null, poll = null;
+  let filter = 'all', typeF = '', allRows = [], q = '', pos = null, rows = [], timer = null, poll = null, nearRange = 1000;
   const actIcon = r => {
     if (r.is_published === false) return '<span class="draft-tag">טיוטה</span>';
     const n = r.level === 0 ? 1 : r.level === 1 ? 2 : 3;
@@ -70,7 +70,7 @@ H.routes.home = async (p, root) => {
   const render = () => {
     const box = H.$('#hmList', w);
     syncToggle();
-    if (!rows.length) { box.innerHTML = '<div class="empty">' + (q || filter !== 'all' ? 'לא נמצאו האבים' : 'עדיין אין האבים. לחץ על ה-+ כדי לפתוח את הראשון') + '</div>'; return; }
+    if (!rows.length) { box.innerHTML = '<div class="empty">' + (q || filter !== 'all' || typeF ? 'לא נמצאו האבים' : 'עדיין אין האבים. לחץ על ה-+ כדי לפתוח את הראשון') + '</div>'; return; }
     const grid = view() === 'grid';
     box.innerHTML = ''; box.className = grid ? 'hubs-grid' : 'hubs-list';
     rows.forEach(r => {
@@ -78,10 +78,10 @@ H.routes.home = async (p, root) => {
       const star = '<button class="star-mini" title="מועדף">' + H.starSvg(r.is_favorite) + '</button>';
       const more = r.is_mine ? '<button class="more-btn" title="ניהול ההאב">⋯</button>' : '';
       const el = H.el(grid
-        ? `<div class="htile" data-id="${r.hub_id}"><h4>${H.esc(r.name)}</h4><div class="pic" style="${picStyle(r)}"><div class="shade"></div>${star}<div class="bot">${actIcon(r)}<span class="badge-type ${r.hub_type}">${H.typeLabel(r.hub_type)}</span></div></div>${more ? '<div style="text-align:center">' + more + '</div>' : ''}</div>`
+        ? `<div class="htile" data-id="${r.hub_id}"><h4>${H.esc(r.name)}</h4><div class="pic" style="${picStyle(r)}"><div class="shade"></div><div class="bot">${actIcon(r)}<span class="badge-type ${r.hub_type}">${H.typeLabel(r.hub_type)}</span></div></div>${more ? '<div style="text-align:center">' + more + '</div>' : ''}</div>`
         : `<div class="hrow" data-id="${r.hub_id}">${star}<div class="nm"><h4>${H.esc(r.name)}</h4><p>${H.esc(sub)}</p></div><div class="pic" style="${picStyle(r)}"></div><div class="ty"><span class="badge-type ${r.hub_type}">${H.typeLabel(r.hub_type)}</span><div>${r.is_published === false ? '<span class="draft-tag">טיוטה</span>' : actIcon(r)}</div></div>${more}</div>`);
       el.onclick = () => { if (r.is_published === false) return H.go('setup', { hub_id: r.hub_id, type: r.hub_type }); H.go('hub', { hub_id: r.hub_id }); };
-      H.$('.star-mini', el).onclick = async e => { e.stopPropagation(); const res = await H.post('/api/hubs/' + r.hub_id + '/favorite'); r.is_favorite = res.is_favorite; if (filter === 'favorites') load(); else H.$('.star-mini', el).innerHTML = H.starSvg(r.is_favorite); };
+      const sm = H.$('.star-mini', el); if (sm) sm.onclick = async e => { e.stopPropagation(); const res = await H.post('/api/hubs/' + r.hub_id + '/favorite'); r.is_favorite = res.is_favorite; if (filter === 'favorites') load(); else sm.innerHTML = H.starSvg(r.is_favorite); };
       const mb = H.$('.more-btn', el); if (mb) mb.onclick = e => { e.stopPropagation(); ownerMenu(r); };
       box.appendChild(el);
     });
@@ -92,10 +92,24 @@ H.routes.home = async (p, root) => {
     const m = H.modal({ title: H.esc(r.name), body, actions: [{ label: 'סגור' }] });
     H.$$('[data-a]', body).forEach(b => b.onclick = () => { m.close(); act(b.dataset.a, r); });
   };
+  const TYPES = [['', 'הכל'], ['social', 'חברתי'], ['business', 'עסקי'], ['professional', 'מקצועי']];
+  const applyType = () => {
+    rows = typeF ? allRows.filter(r => r.hub_type === typeF) : allRows;
+    const tp = H.$('#hmType', w); tp.classList.toggle('active', !!typeF); tp.textContent = typeF ? (TYPES.find(t => t[0] === typeF) || [0, 'סוג'])[1] : 'סוג';
+    render();
+  };
+  const typeMenu = () => {
+    const body = H.el('<div class="range-row" id="tpChips" style="flex-wrap:wrap;gap:8px;justify-content:center"></div>');
+    let m = null;
+    TYPES.forEach(([v, l]) => { const c = H.el('<button class="chip2 ' + (v === typeF ? 'on' : '') + '">' + l + '</button>'); c.onclick = () => { typeF = v; if (m) m.close(); applyType(); }; body.appendChild(c); });
+    m = H.modal({ title: 'סינון לפי סוג האב', body, actions: [{ label: 'סגור' }] });
+  };
+  H.$('#hmType', w).onclick = typeMenu;
   const load = async () => {
     const qs = new URLSearchParams({ filter, q });
     if (pos) { qs.set('lat', pos.lat); qs.set('lng', pos.lng); }
-    try { rows = await H.get('/api/hubs?' + qs); render(); } catch (e) { H.toast(e.message); }
+    if (filter === 'near') qs.set('range', nearRange);
+    try { allRows = await H.get('/api/hubs?' + qs); applyType(); } catch (e) { H.toast(e.message); }
   };
   const act = async (a, r) => {
     if (a === 'enter') return H.go('hub', { hub_id: r.hub_id });
@@ -105,7 +119,7 @@ H.routes.home = async (p, root) => {
       if (await H.confirm('לסגור את ההאב "' + H.esc(r.name) + '"? כל הנוכחים יוצאו ממנו.', 'סגירת האב', true)) { await H.post('/api/hubs/' + r.hub_id + '/close'); load(); }
       return;
     }
-    if (a === 'share') return shareDialog(r);
+    if (a === 'share') return H.shareFlow({ hub: { hub_id: r.hub_id, name: r.name, serial: r.serial } });
   };
   async function shareDialog(r) {
     const [cts, grs] = await Promise.all([H.get('/api/contacts'), H.get('/api/contact-groups')]);
@@ -125,10 +139,22 @@ H.routes.home = async (p, root) => {
     });
   }
   H.$('#hmQ', w).oninput = e => { q = e.target.value.trim(); clearTimeout(timer); timer = setTimeout(load, 250); };
-  H.$$('#hmFilters .pill', w).forEach(pl => pl.onclick = async () => {
-    filter = pl.dataset.f;
-    H.$$('#hmFilters .pill', w).forEach(x => x.classList.toggle('active', x === pl));
-    if (filter === 'near' && !pos) pos = await H.getPosition(5000);
+  /* "קרובים": choose a search radius; the list depends on hub settings and the user's own location settings */
+  async function nearMenu() {
+    const body = H.el('<div><p style="margin:0 0 8px">בחר טווח חיפוש להאבים קרובים:</p><div class="range-row" id="nrChips"></div><div class="warnnote" style="margin-top:10px">הרשימה אינה מדויקת ותלויה בהגדרות ההאבים (רק האבים שהוגדר בהם מיקום) ובהגדרות המיקום של המשתמש עצמו.</div></div>');
+    const chips = H.$('#nrChips', body);
+    [[200, "200 מ'"], [1000, '1 ק"מ'], [2000, '2 ק"מ']].forEach(([v, l]) => { const c = H.el('<button class="chip2 ' + (v === nearRange ? 'on' : '') + '" data-r="' + v + '">' + l + '</button>'); c.onclick = () => { nearRange = v; H.$$('#nrChips .chip2', body).forEach(x => x.classList.toggle('on', x === c)); }; chips.appendChild(c); });
+    return new Promise(res => H.modal({ title: 'האבים קרובים', body, onClose: () => res(false), actions: [{ label: 'ביטול', onClick: () => res(false) }, { label: 'הצג', cls: 'primary', onClick: () => res(true) }] }));
+  }
+  H.$$('#hmFilters .pill[data-f]', w).forEach(pl => pl.onclick = async () => {
+    const f = pl.dataset.f;
+    if (f === 'near') {
+      if (!(await nearMenu())) return;
+      pos = await H.getPosition(8000);
+      if (!pos) { H.toast('כדי לראות האבים קרובים יש לאשר גישה למיקום בדפדפן', 5000); if (!(await H.confirm('לא הצלחנו לאתר אותך. לנסות שוב ולאשר גישה למיקום?', 'נסה שוב'))) return; pos = await H.getPosition(10000); if (!pos) return H.toast('המיקום אינו זמין. בדוק את הגדרות המיקום של המכשיר'); }
+    }
+    filter = f;
+    H.$$('#hmFilters .pill[data-f]', w).forEach(x => x.classList.toggle('active', x === pl));
     load();
   });
   H.$('#hmVg', w).onclick = () => { H.setPref('hubs_view', 'grid'); render(); };
@@ -136,6 +162,7 @@ H.routes.home = async (p, root) => {
   H.onSock('hub_closed', load);
   H.onSock('private_message', () => { });
   load();
+  if (me.registered && !(me.prefs || {}).tour_seen) setTimeout(() => { if (H.screen === 'home') H.tour({ auto: true }); }, 600);
   poll = setInterval(load, 20000);
   H.cleanup = () => { clearInterval(poll); clearTimeout(timer); document.removeEventListener('click', docClick); };
 };

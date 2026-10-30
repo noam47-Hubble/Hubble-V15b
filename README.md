@@ -1,4 +1,4 @@
-# Hubble v15ב
+# HUBIN v15ב.2
 
 Flask + Flask-SocketIO + SQLAlchemy. Hebrew RTL UI, PC (landscape) first with a phone (portrait) layout.
 
@@ -10,3 +10,6 @@ Flask + Flask-SocketIO + SQLAlchemy. Hebrew RTL UI, PC (landscape) first with a 
 Screens: login · home · my cards · hub setup (social / business / professional) · hub · hub management · private messages · my contacts & groups.
 
 See `DEPLOY.md` for the deploy/update steps.
+
+## v15ב.3
+האבי דוגמה (9, שלושה מכל סוג) – טעינה ומחיקה מההגדרות, למנהל בלבד. ראו DEPLOY.md.

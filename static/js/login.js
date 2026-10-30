@@ -1,8 +1,8 @@
 /* HUBBLE v15 — login / registration */
 H.routes.login = async (p, root) => {
   const w = H.el(`<div class="screen"><div class="login-wrap"><div class="glass login-card">
-    <img class="logo-full" src="/static/img/logo_full.png" alt="Hubble">
-    <h1>ברוכים הבאים ל-HUBBLE</h1>
+    <img class="logo-full" src="/static/img/logo_full.png" alt="HUBIN">
+    <h1>ברוכים הבאים ל-HUBIN</h1>
     <p class="lead" style="margin-bottom:18px">משתמש חדש - צור חשבון כדי להתחיל<br>משתמש חוזר - אנא הכנס את אחד המזהים שלך</p>
     <div class="row"><span class="ico">${H.ic('user', 18)}</span><input type="text" id="lgName" placeholder="שם (חובה למשתמש חדש)" autocomplete="name"></div>
     <p class="idlabel" style="margin-top:-4px">השם שתזין כאן הוא שם הרישום שלך — רק אתה תראה אותו. מה שאחרים יראו נקבע בכרטיס שלך.</p>
@@ -11,11 +11,13 @@ H.routes.login = async (p, root) => {
     <div class="row"><span class="ico">${H.ic('mail', 18)}</span><input type="email" id="lgEmail" placeholder="מייל" autocomplete="email"></div>
     <div class="err" id="lgErr"></div>
     <button class="btn primary lg block" id="lgGo">כניסה</button>
-    <p class="terms">בהמשך התהליך, הנך מאשר/ת את<br><a href="#" onclick="return false">תנאי השימוש</a> ואת <a href="#" onclick="return false">מדיניות הפרטיות</a> שלנו.</p>
+    <label class="terms-chk"><input type="checkbox" id="lgAgree"><span>קראתי והבנתי שזו גרסת <b>פיילוט</b>, שהמידע שאזין אינו מוגן ויימחק בסוף הפיילוט, ואני מסכים/ה ל<a href="#" id="lgTerms">תנאי השימוש, הצהרת הפיילוט ומדיניות הפרטיות</a>.</span></label>
   </div></div></div>`);
   root.appendChild(w);
+  const tl = H.$('#lgTerms', w); if (tl) tl.onclick = (e) => { e.preventDefault(); H.showTerms(); };
   const go = async () => {
     const err = H.$('#lgErr', w); err.textContent = '';
+    if (!H.$('#lgAgree', w).checked) { err.textContent = 'יש לסמן שקראת ואת/ה מסכים/ה לתנאי הפיילוט'; return; }
     const body = { name: H.$('#lgName', w).value.trim(), phone: H.$('#lgPhone', w).value.trim(), email: H.$('#lgEmail', w).value.trim() };
     try {
       await H.post('/api/login', body);

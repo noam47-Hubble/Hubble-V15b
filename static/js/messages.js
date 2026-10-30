@@ -4,8 +4,8 @@ H.routes.messages = async (p, root) => {
   const w = H.el('<div class="screen"></div>'); root.appendChild(w);
   const tbar = H.topbar({ title: H.pillsNav('messages') }); w.appendChild(tbar); H.wirePills(tbar);
   const grid = H.el(`<div class="two-col" id="mGrid">
-    <div class="glass" id="pList"><div class="tabsr"><div class="pills2" style="justify-content:flex-start"><button class="chip2 on" data-mt="contacts">אנשי קשר<span class="badge hidden" id="mbC">0</span></button><button class="chip2" data-mt="groups">קבוצות<span class="badge hidden" id="mbG">0</span></button></div></div>
-      <input class="search" id="mQ" type="text" placeholder="חיפוש לפי שם, שם האב, מספר האב או מלל חופשי"><div class="list" id="mRows"></div></div>
+    <div class="glass" id="pList"><div class="tabsr"><div class="pills2" style="justify-content:flex-start"><button class="chip2 on" data-mt="contacts">אנשי קשר<span class="badge hidden" id="mbC">0</span></button><button class="chip2" data-mt="groups">קבוצות<span class="badge hidden" id="mbG">0</span></button></div><span class="sp"></span><button class="t-icon-btn" id="mVg" title="ריבועים">${H.ic('grid', 18)}</button><button class="t-icon-btn" id="mVl" title="שורות">${H.ic('list', 18)}</button></div>
+      <input class="search" id="mQ" type="text" placeholder="חיפוש לפי שם, שם האב, מספר האב או מלל חופשי"><div class="list" id="mRows"></div><div class="ext-msg"><button class="linkbtn" id="mExt" title="שליחת הודעה בווטסאפ או באפליקציה אחרת">שלח הודעה חיצונית</button></div></div>
     <div class="glass" id="pConv"><div class="empty" id="mEmpty">בחר שיחה מהרשימה</div></div>
     <div class="glass cardcol hidden" id="pCard"></div></div>`);
   w.appendChild(grid);
@@ -22,13 +22,16 @@ H.routes.messages = async (p, root) => {
     const uc = rows.reduce((a, r) => a + (r.unread || 0), 0), ug = grows.reduce((a, r) => a + (r.unread || 0), 0);
     [['#mbC', uc], ['#mbG', ug]].forEach(([s, n]) => { const b = H.$(s, grid); b.textContent = n; b.classList.toggle('hidden', !n); });
     const box = H.$('#mRows', grid); box.innerHTML = '';
+    const isG = H.pref('messages_view') === 'grid';
+    H.$('#mVg', grid).classList.toggle('on', isG); H.$('#mVl', grid).classList.toggle('on', !isG);
+    box.className = 'list' + (isG ? ' cgrid4' : ''); box.style.display = isG ? 'grid' : ''; box.style.alignContent = 'start';
     if (tab === 'groups') {
       const ql = q.toLowerCase();
       const list = grows.filter(r => !ql || (r.group_name + ' ' + r.last_text).toLowerCase().includes(ql));
       list.sort((a, b) => (b.key === gcur) - (a.key === gcur));   // the open group first
       list.forEach(r => {
         const pic = r.image ? 'background-image:url(\'' + esc(r.image) + '\');background-size:cover' : 'background:#8e5bd8';
-        const el = H.el(`<div class="r ${r.unread ? 'unread' : ''} ${gcur === r.key ? 'act' : ''}" style="${gcur === r.key ? 'font-weight:700' : ''}"><span class="av" style="${pic};border-radius:12px">${r.image ? '' : H.ic('users', 18)}</span><div class="info"><div class="n">${esc(r.group_name)}</div><div class="l">${r.last_sender ? esc(r.last_sender) + ': ' : ''}${esc(r.last_text)}</div></div><div class="ind">${r.unread ? '<span class="badge">' + r.unread + '</span>' : ''}</div></div>`);
+        const el = isG ? H.el(`<div class="ctile ${gcur === r.key ? 'act' : ''}" style="position:relative;${gcur === r.key ? 'font-weight:700' : ''}">${r.image ? '<div class="av" style="margin:0 auto 6px;width:54px;height:54px;border-radius:12px;background-image:url(\'' + esc(r.image) + '\');background-size:cover"></div>' : '<span class="av" style="background:#8e5bd8;border-radius:12px;margin:0 auto 6px;width:54px;height:54px">' + H.ic('users', 22) + '</span>'}<b>${esc(r.group_name)}</b>${r.status === 'pending' ? '<span class="stt"><i></i>הזמנה</span>' : ''}${r.unread ? '<span class="badge" style="position:absolute;top:4px;inset-inline-start:4px">' + r.unread + '</span>' : ''}</div>`) : H.el(`<div class="r ${r.unread ? 'unread' : ''} ${gcur === r.key ? 'act' : ''}" style="${gcur === r.key ? 'font-weight:700' : ''}"><span class="av" style="${pic};border-radius:12px">${r.image ? '' : H.ic('users', 18)}</span><div class="info"><div class="n">${esc(r.group_name)}</div><div class="l">${r.last_sender ? esc(r.last_sender) + ': ' : ''}${esc(r.last_text)}</div></div><div class="ind">${r.status === 'pending' ? '<span class="stt"><i></i>הזמנה</span>' : r.unread ? '<span class="badge">' + r.unread + '</span>' : ''}</div></div>`);
         el.onclick = () => openGroup(r); box.appendChild(el);
       });
       if (!grows.length) box.innerHTML = '<div class="empty">אין עדיין קבוצות. פתח קבוצה באנשי הקשר</div>';
@@ -36,7 +39,7 @@ H.routes.messages = async (p, root) => {
     }
     rows.forEach(r => {
       const label = r.last_text;
-      const el = H.el(`<div class="r ${r.unread ? 'unread' : ''} ${cur === r.user_id ? 'act' : ''}" data-id="${r.user_id}">${H.avatar(r.photo, r.name, r.user_id)}
+      const el = isG ? H.el(`<div class="ctile ${cur === r.user_id ? 'act' : ''}" data-id="${r.user_id}" style="position:relative">${H.avatar(r.photo, r.name, r.user_id)}<b>${esc(r.name)}</b><span class="stt ${r.open && r.state !== 'off' ? 'on' : ''}"><i></i>${esc(stateLabel(r) || (r.open ? '' : 'סגור'))}</span>${r.unread ? '<span class="badge" style="position:absolute;top:4px;inset-inline-start:4px">' + r.unread + '</span>' : ''}</div>`) : H.el(`<div class="r ${r.unread ? 'unread' : ''} ${cur === r.user_id ? 'act' : ''}" data-id="${r.user_id}">${H.avatar(r.photo, r.name, r.user_id)}
         <div class="info"><div class="n">${esc(r.name)}</div><div class="l">${esc(label)}</div></div>
         <div class="ind"><span class="stt ${r.open && r.state !== 'off' ? 'on' : ''}"><i></i>${esc(stateLabel(r) || (r.open ? '' : 'סגור'))}</span>${r.unread ? '<span class="badge">' + r.unread + '</span>' : ''}</div></div>`);
       el.onclick = () => openConv(r.user_id);
@@ -56,7 +59,7 @@ H.routes.messages = async (p, root) => {
     const cls = m.kind === 'system' ? 'sys' : m.mine ? 'out' : 'in';
     const label = m.kind === 'group' ? '<span class="gl">קבוצה: ' + esc(m.group_name) + (m.mine ? '' : ' · ' + esc(m.sender_name)) + '</span>' : '';
     const hubLink = m.hub_link_id ? '<br><a class="hublink" data-hub="' + m.hub_link_id + '">כניסה להאב ' + esc(m.hub_name) + '</a>' : (m.hub_name && m.kind !== 'system' ? '<small>' + esc(m.hub_name) + '</small>' : '');
-    return `<div class="bub ${cls}" data-id="${m.id}">${label}${esc(m.text)}${m.image ? '<img src="' + esc(m.image) + '">' : ''}${hubLink}<small>${H.fmt(m.ts)}${m.mine ? ' · <a class="mdel" style="cursor:pointer">מחק</a>' : ''}</small></div>`;
+    return `<div class="bub ${cls}" data-id="${m.id}">${label}${esc(m.text)}${m.image ? '<img src="' + esc(m.image) + '">' : ''}${m.file_name ? '<br><a class="fileln" href="/api/messages/' + m.id + '/file" download>📄 ' + esc(m.file_name) + '</a>' : ''}${hubLink}<small>${H.fmt(m.ts)}${m.mine ? ' · <a class="mdel" style="cursor:pointer">מחק</a>' : ''}</small></div>`;
   };
 
   function renderConv() {
@@ -64,7 +67,7 @@ H.routes.messages = async (p, root) => {
     const name = other ? other.name : '';
     const canMsg = other && other.can_message;
     box.innerHTML = `<button class="back" id="mBack">→ חזרה לרשימה</button>
-      <div class="r" style="cursor:default;flex-wrap:nowrap" id="cvHead">${H.avatar(other && other.card && other.card.photo_url, name, cur)}<div class="info"><div class="n">${esc(name)}</div><div class="l">${other && other.open ? esc(stateLabel({ open: other.open, state: other.state, now_hub: other.hub_name })) : 'סגור לתקשורת'}</div></div></div>
+      <div class="r" style="cursor:default;flex-wrap:nowrap" id="cvHead">${H.avatar(other && other.card && other.card.photo_url, name, cur)}<div class="info"><div class="n">${esc(name)}</div>${other && other.card && (other.card.title || other.card.bio) ? '<div class="l">' + esc(other.card.title || other.card.bio) + '</div>' : ''}<div class="l">${other && other.open ? esc(stateLabel({ open: other.open, state: other.state, now_hub: other.hub_name })) : 'סגור לתקשורת'}</div></div></div>
       <div class="chat" id="cvChat">${hasMore ? '<button class="more" id="cvMore">הצג הודעות קודמות</button>' : ''}${msgs.map(bubble).join('') || '<div class="empty">אין עדיין הודעות בשיחה זו</div>'}</div>
       <div id="cvAtt" class="${att ? '' : 'hidden'}" style="font-size:12px">${att ? '<img src="' + esc(att) + '" style="max-height:44px;border-radius:6px"> <a id="cvAttRm" style="cursor:pointer;color:#ff9a9d">×</a>' : ''}</div>
       <div class="comp"><label class="cb" title="צרף תמונה">${H.ic('img', 20)}<input type="file" id="cvImg" accept="image/*" hidden></label><input type="text" id="cvIn" placeholder="${canMsg ? 'כתוב הודעה...' : ''}" ${canMsg ? '' : 'disabled'}><button class="btn primary sm" id="cvSend" ${canMsg ? '' : 'disabled'}>שלח</button></div>
@@ -81,7 +84,7 @@ H.routes.messages = async (p, root) => {
     const inp = H.$('#cvIn', box);
     const send = async () => {
       const text = inp.value.trim(); if (!text && !att) return;
-      try { const m = await H.post('/api/messages/send', { to_user_id: cur, text, image: att }); if (!msgs.find(x => x.id === m.id)) msgs.push(m); att = ''; renderConv(); loadRows(); H.$('#cvIn', grid).focus(); } catch (e) { H.toast(e.message); }
+      try { const m = await H.post('/api/messages/send', { to_user_id: cur, text, image: att }); if (!msgs.find(x => x.id === m.id)) msgs.push(m); H.sound('send'); att = ''; renderConv(); loadRows(); H.$('#cvIn', grid).focus(); } catch (e) { H.toast(e.message); }
     };
     H.$('#cvSend', box).onclick = send; inp.onkeydown = e => { if (e.key === 'Enter') send(); };
     H.$('#cvImg', box).onchange = async e => { att = await H.readImage(e.target.files[0], 900); e.target.value = ''; const v = inp.value; renderConv(); H.$('#cvIn', grid).value = v; };
@@ -104,24 +107,55 @@ H.routes.messages = async (p, root) => {
     try { r = await H.get('/api/messages/group-thread?' + (row.group_id ? 'id=' + encodeURIComponent(row.group_id) : 'name=' + encodeURIComponent(row.group_name))); gmsgs = r.messages; } catch (e) { return H.toast(e.message); }
     gcurRow = { ...row, can_send: r.can_send, group_name: r.group_name || row.group_name };
     grid.classList.add('conv');
-    const box = H.$('#pConv', grid); H.$('#pCard', grid).classList.add('hidden');
+    const box = H.$('#pConv', grid);
     const can = !!r.can_send;
-    box.innerHTML = `<button class="back" id="gBack">→ חזרה לרשימה</button><div class="r" style="cursor:default"><span class="av" style="background:#8e5bd8;border-radius:12px">${H.ic('users', 18)}</span><div class="info"><div class="n">${esc(gcurRow.group_name)}</div><div class="l">קבוצה · לחיצה על שם השולח פותחת הודעה פרטית</div></div></div>
+    const pic = row.image ? '<div class="av zoomable" data-zoom="' + esc(row.image) + '" style="border-radius:12px;background-image:url(\'' + esc(row.image) + '\')"></div>' : '<span class="av" style="background:#8e5bd8;border-radius:12px">' + H.ic('users', 18) + '</span>';
+    const head = `<button class="back" id="gBack">→ חזרה לרשימה</button><div class="r" style="cursor:default">${pic}<div class="info"><div class="n">${esc(gcurRow.group_name)}</div><div class="l">${esc(row.description || 'קבוצה · לחיצה על שם השולח פותחת הודעה פרטית')}</div></div></div>`;
+    if (r.status === 'pending') {
+      box.innerHTML = head + `<div class="empty" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px"><div class="warnnote">הוזמנת להצטרף לקבוצה <b>${esc(gcurRow.group_name)}</b>. אנא אשר/י.</div><div class="btn-row center"><button class="btn primary" id="gYes">צרף אותי</button><button class="btn danger" id="gNo">דחה הצטרפות</button></div></div>`;
+      H.$('#gBack', box).onclick = () => { gcur = null; grid.classList.remove('conv'); box.innerHTML = '<div class="empty">בחר שיחה מהרשימה</div>'; loadRows(); };
+      H.$('#gYes', box).onclick = async () => { await H.post('/api/groups/' + row.group_id + '/respond', { accept: true }); H.toast('הצטרפת לקבוצה'); await loadRows(); openGroup({ ...row, status: 'active' }); H.sockGlobal.unread_changed.forEach(f => f()); };
+      H.$('#gNo', box).onclick = async () => { await H.post('/api/groups/' + row.group_id + '/respond', { accept: false }); H.toast('ההצטרפות נדחתה'); gcur = null; gcurRow = null; grid.classList.remove('conv'); box.innerHTML = '<div class="empty">בחר שיחה מהרשימה</div>'; loadRows(); };
+      renderGroupCard(row.group_id); loadRows(); return;
+    }
+    box.innerHTML = head + `
       <div class="chat" id="gChat">${gmsgs.map(m => `<div class="bub ${m.mine ? 'out' : 'in'}" data-id="${m.id}">${m.mine ? '' : '<span class="gl" style="cursor:pointer;text-decoration:underline" data-uid="' + m.from_user_id + '">' + esc(m.sender_name) + '</span>'}${esc(m.text)}${m.image ? '<img src="' + esc(m.image) + '">' : ''}<small>${H.fmt(m.ts)}</small></div>`).join('') || '<div class="empty">אין הודעות. כתוב הודעה ראשונה לקבוצה</div>'}</div>
       <div id="gAtt" class="hidden" style="font-size:12px"></div>
       <div class="comp"><label class="cb" title="צרף תמונה">${H.ic('img', 20)}<input type="file" id="gImg" accept="image/*" hidden></label><input type="text" id="gIn" placeholder="${can ? 'כתוב לכל הקבוצה...' : 'אין אפשרות לכתוב בקבוצה זו'}" ${can ? '' : 'disabled'}><button class="btn primary sm" id="gSend" ${can ? '' : 'disabled'}>שלח</button></div>`;
-    H.$('#gBack', box).onclick = () => { gcur = null; grid.classList.remove('conv'); box.innerHTML = '<div class="empty">בחר שיחה מהרשימה</div>'; loadRows(); };
+    H.$('#gBack', box).onclick = () => { gcur = null; grid.classList.remove('conv'); box.innerHTML = '<div class="empty">בחר שיחה מהרשימה</div>'; H.$('#pCard', grid).classList.add('hidden'); loadRows(); };
     H.$$('[data-uid]', box).forEach(a => a.onclick = () => { tab = 'contacts'; syncTabs(); openConv(a.dataset.uid); });
     const ch = H.$('#gChat', box); ch.scrollTop = ch.scrollHeight;
     let gatt = '';
     const sendG = async () => {
       const inp = H.$('#gIn', box), text = inp.value.trim(); if (!text && !gatt) return;
       try { await H.post('/api/messages/group-send', { group_id: gcurRow.group_id, text, image: gatt }); } catch (e) { return H.toast(e.message); }
-      gatt = ''; openGroup(gcurRow);
+      H.sound('send'); gatt = ''; openGroup(gcurRow);
     };
     H.$('#gSend', box).onclick = sendG; H.$('#gIn', box).onkeydown = e => { if (e.key === 'Enter') sendG(); };
     H.$('#gImg', box).onchange = async e => { gatt = await H.readImage(e.target.files[0], 900); e.target.value = ''; const a = H.$('#gAtt', box); a.classList.remove('hidden'); a.innerHTML = '<img src="' + esc(gatt) + '" style="max-height:44px;border-radius:6px"> מצורפת תמונה'; };
+    if (row.group_id) renderGroupCard(row.group_id); else H.$('#pCard', grid).classList.add('hidden');
     loadRows(); H.sockGlobal.unread_changed.forEach(f => f());
+  }
+  /* the group's business card (left column on desktop, second window on phones) with its people */
+  async function renderGroupCard(gid, memberUid) {
+    const cardBox = H.$('#pCard', grid); let d;
+    try { d = await H.get('/api/groups/' + gid); } catch (e) { cardBox.classList.add('hidden'); return; }
+    cardBox.classList.remove('hidden');
+    if (memberUid) {
+      const m = d.members.find(x => x.user_id === memberUid); if (!m) return renderGroupCard(gid);
+      const mine = H.me && (H.me.user_id === m.user_id);
+      cardBox.innerHTML = '<button class="back2" id="gcBack">→ חזרה לכרטיס הקבוצה</button>' + H.cardHtml({ ...(m.card || {}), id: m.user_id, display_name: m.name, photo_url: m.photo }) + (!mine && m.open ? '<div class="btn-row center" style="margin-top:10px"><button class="btn primary sm" id="gcMsg">שלח הודעה פרטית</button></div>' : '');
+      H.$('#gcBack', cardBox).onclick = () => renderGroupCard(gid);
+      const mm = H.$('#gcMsg', cardBox); if (mm) mm.onclick = () => { tab = 'contacts'; syncTabs(); openConv(m.user_id); };
+      return;
+    }
+    const icon = d.image ? '<div class="av lg zoomable" data-zoom="' + esc(d.image) + '" style="border-radius:16px;background-image:url(\'' + esc(d.image) + '\');margin:0 auto"></div>' : '<span class="av lg" style="background:#8e5bd8;border-radius:16px;margin:0 auto">' + H.ic('users', 30) + '</span>';
+    const mem = d.members.filter(m => !m.pending);
+    cardBox.innerHTML = `<div class="cardview">${icon}<h3>${esc(d.name)}</h3><span class="tag">קבוצה</span></div>${d.description ? '<p style="margin:6px 0">' + esc(d.description) + '</p>' : ''}<div class="cv-row"><span>הוקמה על ידי</span><span>${esc(d.founder_name)}</span></div><div class="cv-row"><span>חברים</span><span>${mem.length}</span></div>
+      <div class="grp">אנשי הקבוצה</div><div class="members">${mem.map(m => `<div class="r" data-u="${m.user_id}" style="cursor:pointer">${H.avatar(m.photo, m.name, m.user_id, 'sm')}<div class="info"><div class="n">${esc(m.name)}${m.is_founder ? ' <span class="tag">מקים</span>' : ''}</div></div></div>`).join('')}</div>
+      ${d.status === 'active' ? '<div class="btn-row center" style="margin-top:12px"><button class="btn danger sm" id="gcLeave">עזוב את הקבוצה</button></div>' : d.is_owner ? '<div class="cv-note">אתה מקים הקבוצה. עריכה ומחיקה — במסך ״אנשי הקשר שלי״.</div>' : ''}`;
+    H.$$('[data-u]', cardBox).forEach(r => r.onclick = () => renderGroupCard(gid, r.dataset.u));
+    const lv = H.$('#gcLeave', cardBox); if (lv) lv.onclick = async () => { if (await H.confirm('לעזוב את הקבוצה "' + esc(d.name) + '"?', 'עזיבה', true)) { await H.post('/api/groups/' + gid + '/leave'); gcur = null; gcurRow = null; grid.classList.remove('conv'); H.$('#pConv', grid).innerHTML = '<div class="empty">בחר שיחה מהרשימה</div>'; cardBox.classList.add('hidden'); loadRows(); } };
   }
   function syncTabs() { H.$$('[data-mt]', grid).forEach(b => b.classList.toggle('on', b.dataset.mt === tab)); }
   H.$$('[data-mt]', grid).forEach(b => b.onclick = () => {
@@ -135,6 +169,10 @@ H.routes.messages = async (p, root) => {
     catch (e) { return H.toast(e.message); }
     grid.classList.add('conv'); renderConv(); loadRows(); H.sockGlobal.unread_changed.forEach(f => f());
   }
+  H.$('#mExt', grid).onclick = () => { const c = (other && other.card) || {}; H.externalMessage(cur && other ? { name: other.name, phone: c.phone || '' } : {}); };
+  H.$('#mVg', grid).onclick = () => { H.setPref('messages_view', 'grid'); loadRows(); };
+  H.$('#mVl', grid).onclick = () => { H.setPref('messages_view', 'list'); loadRows(); };
+  H.$('#tbLogo', tbar).onclick = () => { const bb = grid.classList.contains('conv') && (H.$('#mBack', grid) || H.$('#gBack', grid)); if (bb) return bb.click(); const r = H.returnTo; if (r && r.name && H.routes[r.name]) H.go(r.name, r.params || {}); else H.go('home'); };
   let tq;
   H.$('#mQ', grid).oninput = e => { q = e.target.value.trim(); clearTimeout(tq); tq = setTimeout(loadRows, 250); };
   H.onSock('private_message', async m => {
@@ -146,6 +184,7 @@ H.routes.messages = async (p, root) => {
     }
     loadRows();
   });
+  H.onSock('groups_changed', () => { loadRows(); if (gcur && gcurRow && gcurRow.group_id) openGroup(gcurRow); });
   H.onSock('private_message_deleted', d => { if (cur && d.other_user_id === cur) { msgs = msgs.filter(x => x.id !== d.id); renderConv(); } loadRows(); });
   await loadRows();
   if (p.open_user) openConv(p.open_user);

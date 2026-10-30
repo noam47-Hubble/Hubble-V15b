@@ -25,6 +25,7 @@
     clip: '<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>',
     img: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>',
     send: '<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>',
+    bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>',
     gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
     chart: '<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>',
     share: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.6" y1="13.5" x2="15.4" y2="17.5"/><line x1="15.4" y1="6.5" x2="8.6" y2="10.5"/>',
@@ -189,6 +190,8 @@
     H.sockScreen = {};
     H.suppressPmToast = false;
     H.prevScreen = H.screen; H.prevParams = H.params;
+    /* the logo on the private-messages screen returns to wherever we came from (hub, contacts, ...) */
+    if (name === 'messages' && H.screen && H.screen !== 'messages' && H.screen !== 'lock' && H.screen !== 'login') H.returnTo = { name: H.screen, params: H.screen === 'hub' ? { ...(H.params || {}), nocard: 1 } : (H.params || {}) };
     H.screen = name; H.params = params || {};
     document.body.classList.toggle('fit', name === 'hub' || name === 'messages');
     /* each navigation gets its own container; a slow, superseded route draws into a detached node */
@@ -218,39 +221,54 @@
     try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); if (actx.state === 'suspended') actx.resume(); } catch (e) { }
   };
   ['click', 'touchstart', 'keydown'].forEach(ev => document.addEventListener(ev, unlockAudio, { passive: true }));
-  const TONES = { pm: [[880, .12], [1175, .16]], hub_msg: [[660, .1]], hub_join: [[523, .08], [659, .08], [784, .1]], invite: [[784, .1], [988, .1], [1319, .18]] };
+  const TONES = { pm: [[880, .12], [1175, .16]], hub_msg: [[660, .1]], hub_join: [[523, .08], [659, .08], [784, .1]], invite: [[784, .1], [988, .1], [1319, .18]],
+    app_open: [[523, .09], [784, .16]], hub_enter: [[659, .09], [880, .09], [1047, .16]], send: [[1047, .07]] };
+  const playTones = kind => {
+    let t = actx.currentTime + 0.01;
+    (TONES[kind] || []).forEach(([f, d]) => {
+      const o = actx.createOscillator(), g = actx.createGain();
+      o.type = 'sine'; o.frequency.value = f; g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.2, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+      o.connect(g); g.connect(actx.destination); o.start(t); o.stop(t + d + 0.02); t += d * 0.9;
+    });
+  };
   H.sound = kind => {
-    if (!H.pref('sound_' + kind)) return;
+    if (H.hubMuted && H.screen === 'hub' && kind !== 'app_open') return;
+    const pv = H.pref('sound_' + kind); if (pv === false || (pv === undefined && kind === 'hub_join')) return;
     try {
-      unlockAudio(); if (!actx || actx.state !== 'running') return;
-      let t = actx.currentTime + 0.01;
-      (TONES[kind] || []).forEach(([f, d]) => {
-        const o = actx.createOscillator(), g = actx.createGain();
-        o.type = 'sine'; o.frequency.value = f; g.gain.setValueAtTime(0.0001, t);
-        g.gain.exponentialRampToValueAtTime(0.18, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + d);
-        o.connect(g); g.connect(actx.destination); o.start(t); o.stop(t + d + 0.02); t += d * 0.9;
-      });
+      unlockAudio(); if (!actx) return;
+      if (actx.state === 'running') playTones(kind);
+      else actx.resume().then(() => { if (actx.state === 'running') playTones(kind); }).catch(() => { });
+      if ((kind === 'pm' || kind === 'hub_msg' || kind === 'invite') && navigator.vibrate) navigator.vibrate(120);   // phones: sound may be muted
     } catch (e) { }
   };
 
-  /* ---------- lightbox: every image can be enlarged and closed ---------- */
-  H.lightbox = src => {
-    if (!src) return;
-    const ov = H.el('<div class="lbx"><img alt=""><button class="btn">סגור</button></div>');
-    ov.querySelector('img').src = src;
+  /* ---------- lightbox: every image can be enlarged (with next/previous over the same area) ---------- */
+  H.lightbox = (src, idx = 0) => {
+    const urls = (Array.isArray(src) ? src : [src]).filter(Boolean); if (!urls.length) return;
+    let i = Math.max(0, Math.min(idx, urls.length - 1));
+    const ov = H.el('<div class="lbx"><img alt=""><div class="lbx-bar"><button class="btn" data-a="p">הקודם</button><button class="btn" data-a="c">סגור</button><button class="btn" data-a="n">הבא</button></div></div>');
+    const show = () => { ov.querySelector('img').src = urls[i]; ov.querySelectorAll('[data-a=p],[data-a=n]').forEach(b => b.style.display = urls.length > 1 ? '' : 'none'); };
     const close = () => { ov.remove(); document.removeEventListener('keydown', esc); };
     const esc = e => { if (e.key === 'Escape') close(); };
-    ov.querySelector('button').onclick = close;
+    ov.querySelector('[data-a=c]').onclick = close;
+    ov.querySelector('[data-a=p]').onclick = e => { e.stopPropagation(); i = (i - 1 + urls.length) % urls.length; show(); };
+    ov.querySelector('[data-a=n]').onclick = e => { e.stopPropagation(); i = (i + 1) % urls.length; show(); };
     ov.addEventListener('click', e => { if (e.target === ov) close(); });
     document.addEventListener('keydown', esc);
-    document.body.appendChild(ov);
+    document.body.appendChild(ov); show();
   };
+  const ZSEL = '[data-zoom], img.matt, img.zoomable, img.thumb, img.cv-img, img.blogo, img.bc-gimg, .bub img, .wbody img, .cardview img, .mlist img, .board-post img';
+  const zurl = el => el.dataset && el.dataset.zoom ? el.dataset.zoom : (el.tagName === 'IMG' ? el.src : '');
   document.addEventListener('click', e => {
     const t = e.target;
-    if (t.closest && t.closest('.lbx')) return;
-    const z = t.closest && t.closest('[data-zoom]');
-    if (z) { e.stopPropagation(); return H.lightbox(z.dataset.zoom); }
-    if (t.tagName === 'IMG' && t.closest('.wbody,.bub,.cardview,.c-img,.matt,.photo-item,.cv-img,.thumbzoom') && !t.closest('button,a')) { e.stopPropagation(); H.lightbox(t.src); }
+    if (!t.closest || t.closest('.lbx')) return;
+    const z = t.closest(ZSEL);
+    if (!z || z.closest('button') || (z.closest('a') && z.tagName === 'IMG' && z.closest('a').target !== '')) return;
+    const scope = z.closest('.chat, .mlist, .wbody, .modal, .bcgate, .zoomarea, .cardview') || z.parentElement || document.body;
+    const all = [...scope.querySelectorAll(ZSEL)].filter(x => zurl(x));
+    e.stopPropagation(); e.preventDefault();
+    H.lightbox(all.map(zurl), Math.max(0, all.indexOf(z)));
   }, true);
 
   /* ---------- private-message banner (15s, one line, any screen) ---------- */
@@ -287,7 +305,8 @@
     body.innerHTML = H.cardHtml(pub) + (others.length ? '<div class="set-sec">החלפה לכרטיס אחר</div>' + others.map(x => '<div class="r" data-sw="' + x.id + '">' + H.avatar(x.photo_url, x.display_name, x.id, 'sm') + '<span class="n">' + H.esc(x.card_name || x.display_name) + ' - ' + (x.type === 'business' ? 'עסקי' : 'חברתי') + '</span></div>').join('') : '');
     const mod = H.modal({ title: 'הכרטיס הפעיל שלי', body, actions: [{ label: 'סגור' }, { label: 'עריכה', cls: 'primary', onClick: () => { const back = H.screen, bp = H.params; H.go('cards', { editId: act.id, back, backParams: bp }); } }] });
     H.$$('[data-sw]', body).forEach(r => r.onclick = async () => {
-      await H.post('/api/cards/' + r.dataset.sw + '/activate'); await H.refreshMe(); mod.close(); H.toast('הכרטיס הפעיל הוחלף');
+      try { await H.post('/api/cards/' + r.dataset.sw + '/activate'); } catch (e) { return H.toast(e.message, 5000); }
+      await H.refreshMe(); mod.close(); H.toast('הכרטיס הפעיל הוחלף');
       H.go(H.screen, H.params);
     });
   };
@@ -296,10 +315,10 @@
   H.topbar = (opts = {}) => {
     const bar = H.el('<div class="topbar"></div>');
     const right = opts.home
-      ? '<div class="logo-stack"><button class="logo-circle" id="tbLogo" title="Hubble"><img src="/static/img/logo.png" alt="Hubble"></button><button class="exit-link" id="tbExit">יציאה</button></div>'
-      : '<button class="logo-circle" id="tbLogo" title="חזרה למסך הבית"><img src="/static/img/logo.png" alt="Hubble"></button>';
+      ? '<div class="logo-stack"><button class="logo-circle" id="tbLogo" title="HUBIN"><img src="/static/img/logo.png" alt="HUBIN"></button><button class="exit-link" id="tbExit">יציאה</button></div>'
+      : '<button class="logo-circle" id="tbLogo" title="חזרה למסך הבית"><img src="/static/img/logo.png" alt="HUBIN"></button>';
     bar.innerHTML = '<div class="tz tr">' + right + '</div>' +
-      '<div class="tz tc">' + (opts.title ? '<span class="screen-title">' + opts.title + '</span>' : '<span class="wordmark">HUBBLE</span>') + '</div>' +
+      '<div class="tz tc">' + (opts.title ? '<span class="screen-title">' + opts.title + '</span>' : '<span class="wordmark">HUBIN</span><span class="pilot-tag" title="גרסת פיילוט">פיילוט</span>') + '</div>' +
       '<div class="tz tl">' + (opts.home ? H.gearBtn() : '') + (opts.tools || '') + H.userBox() + '</div>';
     const ub = H.$('#tbUser', bar); if (ub) ub.onclick = H.activeCardMenu;
     const gb = H.$('#tbGear', bar); if (gb) gb.onclick = H.settings;
@@ -328,6 +347,10 @@
     const q = new URLSearchParams(location.search);
     H.deepLink = q.get('hub') ? { hub: q.get('hub'), code: q.get('code') || '' } : null;
     try { await H.refreshMe(); } catch (e) { H.me = { registered: false }; }
+    /* a restored / cached page (new tab, reopened app) must still ask for the password */
+    let alive = false; try { alive = sessionStorage.getItem('hubin_alive') === '1'; } catch (e) { }
+    if (H.me.has_password && !H.me.locked && !alive) { try { await fetch('/api/lock', { method: 'POST' }); await H.refreshMe(); } catch (e) { } }
+    try { sessionStorage.setItem('hubin_alive', '1'); } catch (e) { }
     if (H.me.theme) H.applyTheme(H.me.theme);
     if (H.me.locked) return H.go('lock');
     H.connectSocket();
@@ -338,12 +361,14 @@
   let hiddenAt = 0;
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) { hiddenAt = Date.now(); return; }
-    if (hiddenAt && H.me && H.me.has_password && Date.now() - hiddenAt > 5 * 60 * 1000) location.reload();
+    if (hiddenAt && H.me && H.me.has_password && Date.now() - hiddenAt > 60 * 1000) { fetch('/api/lock', { method: 'POST' }).finally(() => location.reload()); }
     hiddenAt = 0;
   });
+  window.addEventListener('pageshow', e => { if (e.persisted && H.me && H.me.has_password) fetch('/api/lock', { method: 'POST' }).finally(() => location.reload()); });
   H.afterLogin = () => {
     if (H.me && H.me.theme) H.applyTheme(H.me.theme);
     H.startLocation();
+    H.sound('app_open');
     if (H.deepLink) {
       const d = H.deepLink; H.deepLink = null; history.replaceState(null, '', '/');
       return H.go('hub', { hub_id: d.hub, code: d.code });

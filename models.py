@@ -49,6 +49,7 @@ class User(db.Model):
     prefs = db.Column(db.Text, default="{}")           # JSON: sounds, view modes, language...
     pw_hash = db.Column(db.String, default="")
     is_super = db.Column(db.Boolean, default=False)
+    is_demo = db.Column(db.Boolean, default=False)
 
     cards = db.relationship("Card", backref="user", lazy=True, cascade="all, delete-orphan")
 
@@ -239,6 +240,7 @@ class Hub(db.Model):
     card_message = db.Column(db.String, default="")
     auto_clear_on = db.Column(db.Boolean, default=False)
     auto_clear_at = db.Column(db.Float, nullable=True)     # epoch seconds
+    is_demo = db.Column(db.Boolean, default=False)         # sample hub created by the demo loader
 
     def public_dict(self, owner_card=None):
         return {
@@ -315,6 +317,7 @@ class HubPresence(db.Model):
     physical_ts = db.Column(db.Float, default=0.0)   # last successful location/code verification
     is_live = db.Column(db.Boolean, default=True)
     approval_status = db.Column(db.String, default="approved")  # 'pending' | 'approved'
+    demo = db.Column(db.Boolean, default=False)       # sample registrant (counts as present while its verification is fresh)
     joined_at = db.Column(db.Float, default=time.time)
     last_seen = db.Column(db.Float, default=time.time)
 
@@ -346,6 +349,8 @@ class PrivateMessage(db.Model):
     to_user_id = db.Column(db.String, db.ForeignKey("user.id"), nullable=False)
     text = db.Column(db.Text, default="")
     image_url = db.Column(db.Text, default="")
+    file_url = db.Column(db.Text, default="")      # attached file (shared report, PDF) as a data URL
+    file_name = db.Column(db.String, default="")
     kind = db.Column(db.String, default="normal")  # normal | group | system
     group_name = db.Column(db.String, default="")  # kind == group: shown instead of sender name
     group_id = db.Column(db.String, nullable=True, index=True)  # kind == group: the ContactGroup this conversation belongs to
@@ -383,3 +388,12 @@ class ContactGroupMember(db.Model):
     id = db.Column(db.String, primary_key=True, default=gen_id)
     group_id = db.Column(db.String, db.ForeignKey("contact_group.id"), nullable=False)
     contact_id = db.Column(db.String, db.ForeignKey("contact_share.id"), nullable=False)
+
+
+class GroupMembership(db.Model):
+    """A user invited to (pending) or part of (active) someone else's group."""
+    id = db.Column(db.String, primary_key=True, default=gen_id)
+    group_id = db.Column(db.String, db.ForeignKey("contact_group.id"), nullable=False, index=True)
+    user_id = db.Column(db.String, db.ForeignKey("user.id"), nullable=False, index=True)
+    status = db.Column(db.String, default="pending")      # 'pending' | 'active'
+    invited_ts = db.Column(db.Float, default=time.time)

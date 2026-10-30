@@ -17,13 +17,13 @@ H.routes.contacts = async (p, root) => {
     <div class="glass" id="pList">
       <div class="tabsr"><div class="pills2" style="justify-content:flex-start"><button class="chip2 on" data-t="contacts">אנשי קשר</button><button class="chip2" data-t="groups">קבוצות</button></div><span class="sp"></span>
         <button class="t-icon-btn" id="cVg" title="ריבועים">${H.ic('grid', 18)}</button><button class="t-icon-btn" id="cVl" title="שורות">${H.ic('list', 18)}</button>
-        <button class="fab" id="cNewGrp" title="קבוצה חדשה" style="width:42px;height:42px">${H.ic('plus', 22)}</button></div>
+        <button class="fab" id="cNewGrp" title="הוספה" style="width:42px;height:42px">${H.ic('plus', 22)}</button></div>
       <input class="search" id="cQ" type="text" placeholder="חיפוש לפי שם, חברה, האב, קבוצה או מלל חופשי">
       <div class="fbar" id="cSort" style="margin:0 0 8px"><span class="pill active" data-s="all">הכל</span><span class="pill" data-s="active">פעילים עכשיו</span><span class="pill" data-s="near">קרובים</span></div>
       <div class="list" id="cRows"></div></div>
     <div class="glass" id="pDet"><button class="back" id="cBack">→ חזרה לרשימה</button><div id="cDet"><div class="empty">בחר איש קשר או קבוצה</div></div></div></div>`);
   w.appendChild(grid);
-  let tab = 'contacts', q = '', contacts = [], groups = [], sel = null, sort = 'all', pos = null;
+  let tab = 'contacts', q = '', contacts = [], groups = [], joined = [], sel = null, sort = 'all', pos = null;
   let hideMembers = false, nearState = null;   // nearState: {range, members} after "מי לידי"
   const viewKey = () => tab === 'groups' ? 'groups_view' : 'contacts_view';
   const isGrid = () => H.pref(viewKey()) === 'grid';
@@ -33,7 +33,10 @@ H.routes.contacts = async (p, root) => {
 
   async function load() {
     const qs = pos && sort === 'near' ? '?lat=' + pos.lat + '&lng=' + pos.lng : '';
-    [contacts, groups] = await Promise.all([H.get('/api/contacts' + qs), H.get('/api/contact-groups')]);
+    let jr = [];
+    [contacts, groups, jr] = await Promise.all([H.get('/api/contacts' + qs), H.get('/api/contact-groups'), H.get('/api/messages/groups').catch(() => [])]);
+    joined = jr.filter(r => r.group_id && !r.is_owner);
+    const pendN = joined.filter(r => r.status === 'pending').length;
     renderList(); if (sel) renderDet();
   }
   function syncToggle() {
@@ -69,12 +72,21 @@ H.routes.contacts = async (p, root) => {
         const live = g.contact_ids.map(id => contacts.find(c => c.id === id)).filter(c => c && c.open && c.state !== 'off').length;
         const icon = g.image ? '<div class="av" style="border-radius:12px;background-image:url(\'' + esc(g.image) + '\')"></div>' : '<span class="av" style="background:#8e5bd8;border-radius:12px">' + H.ic('users', 18) + '</span>';
         const el = H.el(isGrid()
-          ? `<div class="ctile ${act ? 'act' : ''}">${icon.replace('class="av"', 'class="av" style="margin:0 auto 6px;width:54px;height:54px"')}<b>${esc(g.name)}</b><span class="stt ${live ? 'on' : ''}"><i></i>${live} פעילים</span></div>`
+          ? `<div class="ctile ${act ? 'act' : ''}">${g.image ? '<div class="av gtile-av" style="margin:0 auto 6px;width:54px;height:54px;border-radius:12px;background-image:url(\'' + esc(g.image) + '\')"></div>' : '<span class="av" style="background:#8e5bd8;border-radius:12px;margin:0 auto 6px;width:54px;height:54px">' + H.ic('users', 22) + '</span>'}<b>${esc(g.name)}</b><span class="stt ${live ? 'on' : ''}"><i></i>${live} פעילים</span></div>`
           : `<div class="r ${act ? 'act' : ''}">${icon}<div class="info"><div class="n">${esc(g.name)}</div><div class="l">${esc(g.description || g.contact_ids.length + ' אנשי קשר')}</div></div><span class="stt ${live ? 'on' : ''}"><i></i>${live} פעילים</span></div>`);
         el.onclick = () => { sel = { type: 'g', id: g.id }; nearState = null; hideMembers = false; grid.classList.add('det'); renderList(); renderDet(); };
         box.appendChild(el);
       });
-      if (!list.length) { box.style.display = ''; box.innerHTML = '<div class="empty">אין קבוצות. לחץ על ה-+ ליצירת קבוצה</div>'; }
+      joined.filter(r => !ql || r.group_name.toLowerCase().includes(ql)).forEach(r => {
+        const act = sel && sel.type === 'j' && sel.id === r.group_id, pend = r.status === 'pending';
+        const icon = r.image ? '<div class="av" style="border-radius:12px;background-image:url(\'' + esc(r.image) + '\')"></div>' : '<span class="av" style="background:#8e5bd8;border-radius:12px">' + H.ic('users', 18) + '</span>';
+        const el = H.el(isGrid()
+          ? `<div class="ctile ${act ? 'act' : ''}" style="position:relative">${r.image ? '<div class="av gtile-av" style="margin:0 auto 6px;width:54px;height:54px;border-radius:12px;background-image:url(\'' + esc(r.image) + '\')"></div>' : '<span class="av" style="background:#8e5bd8;border-radius:12px;margin:0 auto 6px;width:54px;height:54px">' + H.ic('users', 22) + '</span>'}<b>${esc(r.group_name)}</b><span class="stt"><i></i>${pend ? 'ממתין לאישור' : 'חבר בקבוצה'}</span></div>`
+          : `<div class="r ${act ? 'act' : ''}">${icon}<div class="info"><div class="n">${esc(r.group_name)}</div><div class="l">${pend ? 'הוזמנת להצטרף — ממתין לאישורך' : esc(r.description || 'חבר בקבוצה')}</div></div>${pend ? '<span class="badge">!</span>' : '<span class="stt"><i></i>חבר</span>'}</div>`);
+        el.onclick = () => { sel = { type: 'j', id: r.group_id }; grid.classList.add('det'); renderList(); renderDet(); };
+        box.appendChild(el);
+      });
+      if (!list.length && !joined.length) { box.style.display = ''; box.innerHTML = '<div class="empty">אין קבוצות. לחץ על ה-+ ליצירת קבוצה</div>'; }
     }
   }
 
@@ -82,21 +94,24 @@ H.routes.contacts = async (p, root) => {
     if (!list.length) return '<div class="empty">אין חברים להצגה</div>';
     return isGrid() && tab === 'groups'
       ? '<div class="cgrid4">' + list.map(m => `<div class="ctile" data-id="${m.id}">${H.avatar(m.photo, m.name, m.user_id)}<b>${esc(m.name)}</b>${stt(m)}</div>`).join('') + '</div>'
-      : list.map(m => `<div class="r" data-id="${m.id}" style="cursor:default">${H.avatar(m.photo, m.name, m.user_id, 'sm')}<div class="info"><div class="n">${esc(m.name)}</div></div>${stt(m)}${extra ? extra(m) : ''}</div>`).join('');
+      : list.map(m => `<div class="r" data-id="${m.id}" style="cursor:pointer">${H.avatar(m.photo, m.name, m.user_id, 'sm')}<div class="info"><div class="n">${esc(m.name)}</div></div>${stt(m)}${extra ? extra(m) : ''}</div>`).join('');
   }
 
   async function renderDet() {
     const box = H.$('#cDet', grid);
     if (!sel) { box.innerHTML = '<div class="empty">בחר איש קשר או קבוצה</div>'; return; }
+    if (sel.type === 'j') return renderJoined(box);
+    if (sel.type === 'm') return renderMember(box);
     if (sel.type === 'c') {
       const c = contacts.find(x => x.id === sel.id); if (!c) { sel = null; return renderDet(); }
-      let h = H.cardHtml({ ...(c.card || {}), id: c.user_id, display_name: c.name, photo_url: c.photo });
+      let h = (sel.from ? '<button class="back2" id="dBackG">→ חזרה לקבוצה</button>' : '') + H.cardHtml({ ...(c.card || {}), id: c.user_id, display_name: c.name, photo_url: c.photo });
       h += '<div class="cv-row"><span>סטטוס כעת</span><span>' + esc(stateOf(c).t) + '</span></div>';
       if (c.hub_name) h += '<div class="cv-note">נשמר מההאב: ' + esc(c.hub_name) + '</div>';
       h += '<div class="grp">קבוצות</div>' + (groups.length ? groups.map(g => '<label class="r" style="cursor:pointer"><input type="checkbox" data-g="' + g.id + '" ' + (g.contact_ids.includes(c.id) ? 'checked' : '') + '><span class="n">' + esc(g.name) + '</span></label>').join('') : '<div class="note info">אין קבוצות עדיין</div>');
       h += '<div class="btn-row center" style="margin-top:14px"><button class="btn primary sm" id="dMsg" ' + (c.open ? '' : 'disabled') + '>שלח הודעה פרטית</button><button class="btn danger sm" id="dDel">הסר מאנשי הקשר</button></div>';
       box.innerHTML = h;
       H.$$('[data-g]', box).forEach(cb => cb.onchange = async () => { if (cb.checked) await H.post('/api/contact-groups/' + cb.dataset.g + '/members', { contact_ids: [c.id] }); else await H.del('/api/contact-groups/' + cb.dataset.g + '/members/' + c.id); load(); });
+      const bg = H.$('#dBackG', box); if (bg) bg.onclick = () => { sel = sel.from; renderList(); renderDet(); };
       H.$('#dMsg', box).onclick = () => H.go('messages', { open_user: c.user_id, from: 'contacts' });
       H.$('#dDel', box).onclick = async () => { if (await H.confirm('להסיר את ' + esc(c.name) + ' מאנשי הקשר?', 'הסרה', true)) { await H.del('/api/contacts/' + c.id); sel = null; grid.classList.remove('det'); load(); } };
     } else {
@@ -111,7 +126,7 @@ H.routes.contacts = async (p, root) => {
         <div id="gExtra"></div>`;
       if (!hideMembers) {
         h += `<div class="tabsr" style="margin:10px 0 6px"><span class="sp"></span><button class="t-icon-btn ${isGrid() ? '' : 'on'}" id="gVl">${H.ic('list', 16)}</button><button class="t-icon-btn ${isGrid() ? 'on' : ''}" id="gVg">${H.ic('grid', 16)}</button></div>
-        <div class="members">${memberHtml(members, m => '<button class="btn sm danger" data-rm="' + m.id + '">הסר</button>')}</div>`;
+        <div class="members">${memberHtml(members, m => (g.pending_ids || []).includes(m.id) ? '<span class="small" style="opacity:.7">ממתין לאישור</span><button class="btn sm danger" data-rm="' + m.id + '">הסר</button>' : '<button class="btn sm danger" data-rm="' + m.id + '">הסר</button>')}</div>`;
       }
       h += `<div class="btn-row center" style="margin-top:12px"><button class="btn sm" id="gEdit">עריכת קבוצה</button><button class="btn danger sm" id="gDel">מחק קבוצה</button></div>`;
       box.innerHTML = h;
@@ -122,6 +137,7 @@ H.routes.contacts = async (p, root) => {
           (nearState.members.length ? nearState.members.map(m => '<div class="r" style="cursor:default">' + H.avatar(m.photo, m.name, m.user_id, 'sm') + '<div class="info"><div class="n">' + esc(m.name) + '</div><div class="l">' + (m.state === 'hub' ? 'בהאב: ' + esc(m.hub_name) + ' · ' : '') + (m.dist < 1000 ? m.dist + ' מ\'' : (m.dist / 1000).toFixed(1) + ' ק"מ') + '</div></div></div>').join('') : '<div class="empty">אף אחד מהקבוצה לא בטווח כרגע</div>');
         H.$$('[data-rg]', ex).forEach(b => b.onclick = () => near(+b.dataset.rg));
       }
+      H.$$('.members [data-id]', box).forEach(r => r.onclick = e => { if (e.target.closest('[data-rm]')) return; sel = { type: 'c', id: r.dataset.id, from: { type: 'g', id: g.id } }; renderDet(); });
       H.$$('[data-rm]', box).forEach(b => b.onclick = async () => { await H.del('/api/contact-groups/' + g.id + '/members/' + b.dataset.rm); load(); });
       H.$('#gHide', box).onclick = () => { hideMembers = !hideMembers; renderDet(); };
       const vg = H.$('#gVg', box), vl = H.$('#gVl', box);
@@ -132,6 +148,84 @@ H.routes.contacts = async (p, root) => {
       H.$('#gEdit', box).onclick = () => groupDialog(g);
       H.$('#gDel', box).onclick = async () => { if (await H.confirm('למחוק את הקבוצה "' + esc(g.name) + '"? אנשי הקשר יישארו.', 'מחיקה', true)) { await H.del('/api/contact-groups/' + g.id); sel = null; grid.classList.remove('det'); load(); } };
     }
+  }
+
+  async function renderJoined(box) {
+    let d; try { d = await H.get('/api/groups/' + sel.id); } catch (e) { sel = null; return renderDet(); }
+    const icon = d.image ? '<div class="av zoomable" data-zoom="' + esc(d.image) + '" style="background-image:url(\'' + esc(d.image) + '\')"></div>' : '<span class="av" style="background:#8e5bd8">' + H.ic('users', 26) + '</span>';
+    const pend = d.status === 'pending';
+    let h = `<div class="ghead">${icon}<div style="flex:1;min-width:0"><h3>${esc(d.name)}</h3>${d.description ? '<p>' + esc(d.description) + '</p>' : ''}<p class="small" style="opacity:.75">הוקמה על ידי ${esc(d.founder_name)}</p></div></div>`;
+    if (pend) {
+      h += `<div class="warnnote" style="margin:10px 0">צורפת לקבוצה <b>${esc(d.name)}</b> על ידי ${esc(d.founder_name)}. אנא אשר/י.</div>
+        <div class="btn-row center"><button class="btn primary" id="jYes">צרף אותי</button><button class="btn danger" id="jNo">דחה הצטרפות</button></div>`;
+    } else {
+      const members = d.members.filter(m => !m.pending);
+      h += `<p class="gstat">${members.length} חברים</p><div class="btn-row"><button class="btn primary sm" id="jMsg">${H.ic('send', 14)} שלח הודעה לקבוצה</button></div>
+        <div class="members" style="margin-top:8px">${members.map(m => `<div class="r" data-u="${m.user_id}" style="cursor:pointer">${H.avatar(m.photo, m.name, m.user_id, 'sm')}<div class="info"><div class="n">${esc(m.name)}${m.is_founder ? ' <span class="tag">מקים הקבוצה</span>' : ''}</div><div class="l">${esc(m.desc || m.company)}</div></div></div>`).join('')}</div>
+        <div class="btn-row center" style="margin-top:12px"><button class="btn danger sm" id="jLeave">עזוב את הקבוצה</button></div>`;
+    }
+    box.innerHTML = h;
+    const yes = H.$('#jYes', box); if (yes) { yes.onclick = async () => { await H.post('/api/groups/' + d.id + '/respond', { accept: true }); H.toast('הצטרפת לקבוצה'); load(); }; H.$('#jNo', box).onclick = async () => { await H.post('/api/groups/' + d.id + '/respond', { accept: false }); sel = null; grid.classList.remove('det'); H.toast('ההצטרפות נדחתה'); load(); }; }
+    const jm = H.$('#jMsg', box); if (jm) jm.onclick = () => H.go('messages', { open_group: d.id });
+    const jl = H.$('#jLeave', box); if (jl) jl.onclick = async () => { if (await H.confirm('לעזוב את הקבוצה "' + esc(d.name) + '"?', 'עזיבה', true)) { await H.post('/api/groups/' + d.id + '/leave'); sel = null; grid.classList.remove('det'); load(); } };
+    H.$$('[data-u]', box).forEach(r => r.onclick = () => { const m = d.members.find(x => x.user_id === r.dataset.u); sel = { type: 'm', m, from: { type: 'j', id: d.id } }; renderDet(); });
+  }
+  function renderMember(box) {
+    const m = sel.m, mine = H.me && (H.me.user_id === m.user_id || H.me.id === m.user_id);
+    const has = contacts.find(c => c.user_id === m.user_id);
+    let h = '<button class="back2" id="mBackG">→ חזרה לקבוצה</button>' + H.cardHtml({ ...(m.card || {}), id: m.user_id, display_name: m.name, photo_url: m.photo });
+    if (has) h += '<div class="cv-note">✓ באנשי הקשר שלך</div>';
+    h += '<div class="btn-row center" style="margin-top:12px">' + (!mine && m.open ? '<button class="btn primary sm" id="mmMsg">שלח הודעה פרטית</button>' : '') + (!mine && !has && m.open ? '<button class="btn sm" id="mmSave">שמור באנשי הקשר</button>' : '') + '</div>';
+    box.innerHTML = h;
+    H.$('#mBackG', box).onclick = () => { sel = sel.from; renderList(); renderDet(); };
+    const a = H.$('#mmMsg', box); if (a) a.onclick = () => H.go('messages', { open_user: m.user_id, from: 'contacts' });
+    const b = H.$('#mmSave', box); if (b) b.onclick = async () => { try { await H.post('/api/contacts', { user_id: m.user_id }); H.toast('נשמר באנשי הקשר'); load(); } catch (e) { H.toast(e.message); } };
+  }
+
+  /* find registered people (by name / phone / email / one of my hubs) and add them to my contacts */
+  function peopleSearch() {
+    let mode = 'name', hubs = [], hubId = '', results = [], checked = new Set();
+    const body = H.el('<div class="psearch"><div class="pills2" style="margin-bottom:8px"><button class="chip2 on" data-pm="name">לפי שם</button><button class="chip2" data-pm="id">טלפון / מייל</button><button class="chip2" data-pm="hub">מתוך האב</button></div>' +
+      '<select class="field-in hidden" id="psHub" style="margin-bottom:8px"></select><input class="field-in" id="psQ" type="text" placeholder="שם (לפחות 2 אותיות)" style="margin-bottom:8px"><div class="list" id="psRes" style="max-height:44vh;overflow:auto"></div></div>');
+    const res = H.$('#psRes', body);
+    const draw = () => {
+      res.innerHTML = results.length ? '' : '<div class="empty">' + (mode === 'hub' && !hubId ? 'בחר האב' : 'אין תוצאות') + '</div>';
+      results.forEach(r => {
+        const el = H.el(`<div class="r" style="cursor:pointer"><input type="checkbox" ${r.is_contact ? 'disabled checked' : ''} ${checked.has(r.user_id) ? 'checked' : ''}>${H.avatar(r.photo, r.name, r.user_id, 'sm')}<div class="info"><div class="n">${esc(r.name)}</div><div class="l">${esc(r.desc || r.company)}</div></div>${r.is_contact ? '<span class="small" style="opacity:.7">באנשי הקשר</span>' : ''}</div>`);
+        const cb = H.$('input', el); cb.onclick = e => { e.stopPropagation(); cb.checked ? checked.add(r.user_id) : checked.delete(r.user_id); };
+        el.onclick = e => { if (e.target === cb) return; showCard(r); };
+        res.appendChild(el);
+      });
+    };
+    const run = async () => {
+      const qv = H.$('#psQ', body).value.trim();
+      try {
+        if (mode === 'hub') results = hubId ? await H.get('/api/people/search?mode=hub&hub_id=' + hubId) : [];
+        else results = await H.get('/api/people/search?mode=' + mode + '&q=' + encodeURIComponent(qv));
+      } catch (e) { results = []; H.toast(e.message); }
+      draw();
+    };
+    const showCard = r => {
+      const b = H.el('<div>' + H.cardHtml({ ...(r.card || {}), id: r.user_id, display_name: r.name, photo_url: r.photo }) + '</div>');
+      H.modal({ title: '', body: b, actions: [{ label: 'בטל' }, ...(r.is_contact ? [] : [{ label: 'צרף לאנשי הקשר', cls: 'primary', onClick: async () => { try { await H.post('/api/contacts', { user_id: r.user_id }); r.is_contact = true; H.toast('נוסף לאנשי הקשר'); draw(); load(); } catch (e) { H.toast(e.message); return false; } } }])] });
+    };
+    let t; H.$('#psQ', body).oninput = () => { clearTimeout(t); t = setTimeout(run, 300); };
+    H.$$('[data-pm]', body).forEach(b => b.onclick = async () => {
+      mode = b.dataset.pm; H.$$('[data-pm]', body).forEach(x => x.classList.toggle('on', x === b)); results = []; checked.clear();
+      const q = H.$('#psQ', body), hs = H.$('#psHub', body);
+      q.classList.toggle('hidden', mode === 'hub'); hs.classList.toggle('hidden', mode !== 'hub');
+      q.placeholder = mode === 'id' ? 'מספר טלפון או כתובת מייל מלאים' : 'שם (לפחות 2 אותיות)';
+      if (mode === 'hub' && !hubs.length) { hubs = await H.get('/api/people/hubs').catch(() => []); hs.innerHTML = '<option value="">בחר האב...</option>' + hubs.map(h => '<option value="' + h.id + '">' + esc(h.name) + '</option>').join(''); hs.onchange = () => { hubId = hs.value; run(); }; }
+      draw();
+    });
+    H.modal({
+      title: 'חיפוש אנשים', body, wide: true, actions: [{ label: 'סגור' }, { label: 'צרף מסומנים', cls: 'primary', onClick: async () => {
+        if (!checked.size) { H.toast('לא סומנו אנשים'); return false; }
+        let n = 0; for (const id of checked) { try { await H.post('/api/contacts', { user_id: id }); n++; } catch (e) { } }
+        H.toast('נוספו ' + n + ' אנשי קשר'); load();
+      } }]
+    });
+    draw();
   }
 
   async function near(range) {
@@ -179,7 +273,7 @@ H.routes.contacts = async (p, root) => {
     });
   }
 
-  H.$$('[data-t]', grid).forEach(pl => pl.onclick = () => { tab = pl.dataset.t; sel = null; grid.classList.remove('det'); H.$$('[data-t]', grid).forEach(x => x.classList.toggle('on', x === pl)); H.$('#cDet', grid).innerHTML = '<div class="empty">בחר איש קשר או קבוצה</div>'; renderList(); });
+  H.$$('[data-t]', grid).forEach(pl => pl.onclick = () => { tab = pl.dataset.t; H.$('#cNewGrp', grid).title = tab === 'contacts' ? 'חיפוש והוספת אנשי קשר' : 'קבוצה חדשה'; sel = null; grid.classList.remove('det'); H.$$('[data-t]', grid).forEach(x => x.classList.toggle('on', x === pl)); H.$('#cDet', grid).innerHTML = '<div class="empty">בחר איש קשר או קבוצה</div>'; renderList(); });
   H.$$('#cSort .pill', grid).forEach(pl => pl.onclick = async () => {
     sort = pl.dataset.s; H.$$('#cSort .pill', grid).forEach(x => x.classList.toggle('active', x === pl));
     if (sort === 'near') pos = await H.reportLocation(true);
@@ -188,8 +282,11 @@ H.routes.contacts = async (p, root) => {
   H.$('#cVg', grid).onclick = () => { H.setPref(viewKey(), 'grid'); renderList(); };
   H.$('#cVl', grid).onclick = () => { H.setPref(viewKey(), 'list'); renderList(); };
   H.$('#cQ', grid).oninput = e => { q = e.target.value.trim(); renderList(); };
-  H.$('#cBack', grid).onclick = () => grid.classList.remove('det');
-  H.$('#cNewGrp', grid).onclick = () => groupDialog(null);
+  const backList = () => { grid.classList.remove('det'); };
+  H.$('#cBack', grid).onclick = backList;
+  H.$('#tbLogo', bar).onclick = () => { if (grid.classList.contains('det')) backList(); else H.go('home'); };
+  H.onSock('groups_changed', () => load());
+  H.$('#cNewGrp', grid).onclick = () => tab === 'contacts' ? peopleSearch() : groupDialog(null);
   H.onSock('private_message', () => load());
   await load();
 };

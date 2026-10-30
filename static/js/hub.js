@@ -34,31 +34,32 @@
     const S = {
       hub: cfg.hub, blocks: cfg.blocks || [], posts: cfg.posts || {}, people: cfg.people || [], board: cfg.board || [],
       ptab: 'present', pq: '', msgTab: 'general', mq: '', thread: null, att: '', pinNext: false,
-      peopleOpen: true, msgsOpen: true, openIds: null, full: null, cardOpen: false, cardData: null, cardView: null,
+      peopleOpen: false, msgsOpen: false, openIds: null, full: null, newMsgs: 0, newPosts: {}, isFav: !!cfg.isFav,
       timer: null, myId: cfg.myId, myStatus: cfg.myStatus || 'green',
       pmRows: [], pmMsgs: [], pmHasMore: false, pmOther: null, contactIds: new Set(),
     };
     const ro = !!cfg.readonly;
-    const $ = (s) => H.$(s, host);
+    const $ = (s) => H.$(s, host) || (cfg.bandHost && H.$(s, cfg.bandHost));
     const defId = () => { const b = S.blocks.find(x => x.is_default); return b ? b.id : null; };
     const blockBy = id => S.blocks.find(x => x.id === id);
     const me = () => S.people.find(p => p.user_id === S.myId);
     const iAmClosed = () => { const m = me(); return (m ? m.status === 'red' : S.myStatus === 'red'); };
 
+    const bandHtml = `<div class="band" id="band"><button class="bfav hidden" id="bFav" title="מועדף"></button><div class="btxt"><h1 id="bName"></h1><p class="sub" id="bSub"></p><p class="meta" id="bMeta"></p></div><img class="blogo hidden" id="bLogo" alt=""><button class="bshare hidden" id="bShare" title="שתף">${H.ic('share', 20)}</button></div>`;
+    if (cfg.bandHost) cfg.bandHost.innerHTML = bandHtml;
     host.innerHTML = `
       <div class="hubwrap" id="hubwrap">
-      <div class="band"><div><h1 id="bName"></h1><p class="sub" id="bSub"></p><p class="meta" id="bMeta"></p></div><img class="blogo hidden" id="bLogo" alt=""></div>
+      ${cfg.bandHost ? '' : bandHtml}
       <div class="vnote-host" id="vnote"></div>
       <div class="stage" id="stage">
         <section class="col people" id="colP"><div class="inner">
-          <div class="ch"><h2>רשימת האנשים</h2><div class="ch-tools"><button class="vt" id="pvList" title="שורות">${H.ic('list', 16)}</button><button class="vt" id="pvGrid" title="ריבועים">${H.ic('grid', 16)}</button><button class="expand" data-full="people" title="הגדל">${H.ic('expand', 16)}</button></div><div class="seg" id="pSeg"><button data-v="registered">רשומים להאב</button><button data-v="present" class="on">נוכחים בהאב</button></div></div>
+          <div class="ch"><h2 data-x="people">רשימת האנשים</h2><div class="ch-tools"><button class="vt" id="pvList" title="שורות">${H.ic('list', 16)}</button><button class="vt" id="pvGrid" title="ריבועים">${H.ic('grid', 16)}</button><button class="expand" data-full="people" title="הגדל / צמצם">${H.ic('expand', 16)}</button></div><div class="seg" id="pSeg"><button data-v="registered">רשומים להאב</button><button data-v="present" class="on">נוכחים בהאב</button></div></div>
           <div class="sbar"><input type="text" id="pq" placeholder="חיפוש לפי שם, חברה, תפקיד או מלל חופשי"></div>
-          <div class="pact hidden" id="pactPresence"></div>
           <div class="pact hidden" id="pact"></div>
           <div class="plist" id="plist"></div>
         </div></section>
         <section class="col msgs" id="colM">
-          <div class="ch"><h2>הודעות</h2><div class="ch-tools"><button class="expand" data-full="msgs" title="הגדל">${H.ic('expand', 16)}</button></div><div class="seg" id="mSeg"><button data-v="general" class="on">כללית</button><button data-v="private">פרטית <span class="badge hidden" id="pmBadge" style="height:16px;min-width:16px;font-size:10px"></span></button></div></div>
+          <div class="ch"><h2 data-x="msgs">הודעות</h2><div class="ch-tools"><button class="expand" data-full="msgs" title="הגדל / צמצם">${H.ic('expand', 16)}</button></div><div class="seg" id="mSeg"><button data-v="general" class="on">כללית</button><button data-v="private">פרטית <span class="badge hidden" id="pmBadge" style="height:16px;min-width:16px;font-size:10px"></span></button></div></div>
           <div class="sbar"><input type="text" id="mq" placeholder="חיפוש הודעות לפי שם או מלל חופשי"></div>
           <div class="thead hidden" id="thead"></div>
           <div class="mlist" id="mlist"></div>
@@ -74,10 +75,9 @@
           </div>
         </section>
         <section class="info-area" id="infoArea"><div class="windows n1" id="windows"></div></section>
+        <div class="stage-hint hidden" id="stageHint">בחר חלון מהכפתורים שבתחתית המסך</div>
       </div>
-      <div class="minbar hidden" id="minBar"><button class="btn" id="minBtn">צמצם חלון</button></div>
       <div class="btnbar2" id="btnbar"></div>
-      <div class="hubfoot2" id="hubFoot"></div>
       </div>`;
 
     /* ---------------- band / background ---------------- */
@@ -90,6 +90,12 @@
       $('#bMeta').textContent = meta; $('#bMeta').classList.toggle('hidden', !meta);
       const lg = $('#bLogo'); const show = h.logo_visible !== false && h.logo_url;
       lg.classList.toggle('hidden', !show); if (show) lg.src = h.logo_url;
+      const fv = $('#bFav'), sh = $('#bShare');
+      fv.classList.toggle('hidden', ro); sh.classList.toggle('hidden', ro);
+      fv.innerHTML = H.starSvg(S.isFav); fv.onclick = async () => { if (cfg.onFav) { S.isFav = await cfg.onFav(); fv.innerHTML = H.starSvg(S.isFav); } };
+      sh.onclick = () => cfg.onShare && cfg.onShare();
+      const bd0 = $('#band'); bd0.classList.toggle('clk', !!(h.has_card && !ro)); bd0.onclick = e => { if (ro || !h.has_card || e.target.closest('button')) return; cfg.onBandClick && cfg.onBandClick(); };
+      const bl = $('#bLogo'); bl.onclick = () => { if (S.full) { S.full = null; update(); } };
       renderFoot();
       const sc = host.closest('.hubscr');
       if (sc) { sc.setAttribute('data-theme', h.template_id || 'corporate_classic'); sc.classList.toggle('glow', !!h.glow); sc.classList.toggle('cool', h.hub_type === 'social' && !!h.glow); }
@@ -126,15 +132,7 @@
         box.appendChild(el);
       });
       renderPact(list);
-      renderPresenceBar();
-    }
-    function renderPresenceBar() {
-      const bar = $('#pactPresence'); if (ro || !S.hub.presence_mode || S.hub.presence_mode === 'none') { bar.classList.add('hidden'); return; }
-      const m = me();
-      if (m && m.is_physical) { bar.classList.remove('hidden'); bar.innerHTML = '<span>✓ נוכחותך בהאב אומתה</span>'; return; }
-      bar.classList.remove('hidden');
-      bar.innerHTML = '<span>אתה בהאב מרחוק — הנוכחות הפיזית לא אומתה</span><button id="verBtn">אמת נוכחות</button>';
-      $('#verBtn').onclick = () => cfg.onVerify && cfg.onVerify();
+      renderCounts();
     }
     function renderPact(list) {
       const bar = $('#pact'), q = S.pq.trim();
@@ -241,11 +239,9 @@
       return el;
     }
     function pmRowEl(m) {
-      const mine = m.mine;
-      const nm = mine ? 'אני' : (m.kind === 'group' ? (m.group_name + ' · ' + m.sender_name) : (m.sender_name || nameOfPerson(S.thread)));
-      const el = H.el(`<div class="mrow2 ${m.kind === 'system' ? 'adm' : ''}"><div class="mhead"><span class="mname" style="cursor:default">${esc(nm)}</span>
-        <span class="mtime">${H.fmt(m.ts)}</span><span class="macts">${mine && !ro ? '<button class="del" title="מחק">' + H.ic('trash', 15) + '</button>' : ''}</span></div>
-        <div class="mtext" style="padding-inline-start:0">${esc(m.text)}${m.image ? '<img class="matt" src="' + esc(m.image) + '" alt="">' : ''}</div></div>`);
+      const mine = m.mine, sys = m.kind === 'system';
+      const who = mine ? '' : (m.kind === 'group' ? '<span class="gl">' + esc(m.group_name + ' · ' + m.sender_name) + '</span>' : '');
+      const el = H.el(`<div class="bub ${sys ? 'sys' : (mine ? 'out' : 'in')}" data-id="${m.id}">${who}${esc(m.text)}${m.image ? '<img class="matt" src="' + esc(m.image) + '" alt="">' : ''}${m.file_name ? '<br><a class="fileln" href="/api/messages/' + m.id + '/file" download>📄 ' + esc(m.file_name) + '</a>' : ''}<small>${H.fmt(m.ts)}${mine && !ro ? ' · <a class="del" style="cursor:pointer">מחק</a>' : ''}</small></div>`);
       const d = H.$('.del', el); if (d) d.onclick = async () => { if (cfg.pm) { await cfg.pm.remove(m.id); S.pmMsgs = S.pmMsgs.filter(x => x.id !== m.id); renderMsgs(); } };
       return el;
     }
@@ -259,7 +255,7 @@
         $('#thBack').onclick = () => { S.thread = null; loadPmRows(); };
         $('#thName').onclick = () => { const p = S.people.find(x => x.user_id === S.thread); if (p) openCard(p); };
       } else th.classList.add('hidden');
-      box.innerHTML = '';
+      box.innerHTML = ''; box.classList.toggle('bubs', inThread);
       if (!priv) {
         const now = nowS();
         let list = S.board.slice().sort((a, b) => a.ts - b.ts);
@@ -303,80 +299,104 @@
         if (!S.thread) return;
         try { const m = await cfg.pm.send(S.thread, text, S.att); if (!S.pmMsgs.find(x => x.id === m.id)) S.pmMsgs.push(m); } catch (e) { return H.toast(e.message); }
       } else cfg.onSendBoard && cfg.onSendBoard({ text, image: S.att, pin: cfg.isOwner && $('#pinNext').checked });
-      $('#msgIn').value = ''; S.att = ''; $('#pinNext').checked = false; renderMsgs();
+      H.sound('send'); $('#msgIn').value = ''; S.att = ''; $('#pinNext').checked = false; renderMsgs();
     }
     $('#sendBtn').onclick = sendMsg;
     $('#msgIn').onkeydown = e => { if (e.key === 'Enter') sendMsg(); };
 
     /* ---------------- info windows ("חלונות רשות") + layout ---------------- */
-    const MAXWIN = 3;
-    const initOpen = () => { if (S.openIds === null) { const d = defId(); S.openIds = d ? [d] : []; } };
-    const currentIds = () => { initOpen(); S.openIds = S.openIds.filter(id => blockBy(id)); return S.openIds; };
+    const MAXWIN = 4;
     const wideMq = window.matchMedia('(max-width: 900px)');
+    const vkey = () => 'hubin_view_' + (S.hub.hub_id || '');
+    const pinnedId = () => { const b = S.blocks.find(x => x.is_default && x.is_visible !== false); return b ? b.id : null; };
+    const loadView = () => {
+      if (S.viewLoaded) return; S.viewLoaded = true;
+      if (ro) { S.peopleOpen = true; S.msgsOpen = true; return; }   // setup preview: show everything
+      try { const d = JSON.parse(localStorage.getItem(vkey()) || 'null'); if (d) { S.peopleOpen = !!d.p; S.msgsOpen = !!d.m; S.openIds = Array.isArray(d.w) ? d.w : null; } } catch (e) { }
+    };
+    const saveView = () => { if (ro) return; try { localStorage.setItem(vkey(), JSON.stringify({ p: S.peopleOpen, m: S.msgsOpen, w: S.openIds || [] })); } catch (e) { } };
+    const currentIds = () => {
+      loadView();
+      const pin = pinnedId(); let ids = (S.openIds || []).filter(id => blockBy(id) && blockBy(id).is_visible !== false && id !== pin);
+      ids = ids.slice(0, MAXWIN - (pin ? 1 : 0)); S.openIds = ids;
+      return pin ? [pin].concat(ids) : ids;
+    };
     function applyLayout() {
-      const st = $('#stage'), ids = currentIds();
-      const nWin = ids.length + (S.cardOpen ? 1 : 0);
-      const mobile = wideMq.matches;
-      const openCount = (S.peopleOpen ? 1 : 0) + (S.msgsOpen ? 1 : 0) + (nWin ? 1 : 0);
+      const st = $('#stage'), ids = currentIds(), mobile = wideMq.matches;
       if (S.full === 'people' && !S.peopleOpen) S.full = null;
       if (S.full === 'msgs' && !S.msgsOpen) S.full = null;
       if (S.full && S.full.startsWith('win:') && !ids.includes(S.full.slice(4))) S.full = null;
-      if (openCount < 2 && S.full !== 'card') S.full = null;
-      $('#colP').classList.toggle('hidden', !S.peopleOpen || (!!S.full && S.full !== 'people' && mobile));
-      $('#colM').classList.toggle('hidden', !S.msgsOpen || (!!S.full && S.full !== 'msgs' && mobile));
-      $('#infoArea').classList.toggle('hidden', (mobile && (!nWin || (!!S.full && !S.full.startsWith('win:')))) );
-      st.classList.toggle('only1', openCount === 1);
-      st.classList.toggle('isfull', !!S.full && mobile);
+      const nm = (S.peopleOpen ? 1 : 0) + (S.msgsOpen ? 1 : 0);
+      st.classList.remove('m0', 'm1', 'm2'); st.classList.add('m' + nm);
+      st.classList.toggle('both', nm === 2);
+      $('#colP').classList.toggle('hidden', !S.peopleOpen);
+      $('#colM').classList.toggle('hidden', !S.msgsOpen);
+      $('#infoArea').classList.toggle('hidden', !ids.length);
+      $('#stageHint').classList.toggle('hidden', !!(ids.length || nm) || mobile);
+      /* a people-only layout puts people in the right column; with both open, people right, messages middle */
+      $('#colP').classList.toggle('xf', S.full === 'people'); $('#colM').classList.toggle('xf', S.full === 'msgs');
+      H.$$('.win', host).forEach(w => w.classList.toggle('xf', S.full === 'win:' + w.dataset.id));
+      st.classList.toggle('hasfull', !!S.full);
       st.classList.toggle('hasbg', !!S.hub.background_image_url && S.hub.bg_in_hub !== false);
-      $('#minBar').classList.toggle('hidden', !(S.full && mobile));
-      H.$$('.expand', host).forEach(b => b.classList.toggle('hidden', !(mobile && openCount > 1 && !S.full)));
-      /* a people/messages-only mobile screen takes the whole stage */
+      const hw = $('#hubwrap'); hw.classList.toggle('isfull', !!S.full);
+      host.dataset.full = S.full || '';
+      const bd_ = $('#band'); if (bd_) $('#hubwrap').style.setProperty('--xtop', Math.round(bd_.getBoundingClientRect().bottom + 6) + 'px');
+    }
+    function winHtml(b, plain) {
+      let html = '<h3' + (plain ? '' : ' data-x="win:' + b.id + '"') + '><span>' + esc(b.title) + '</span>' + (plain ? '' : '<button class="wexp expand" data-full="win:' + b.id + '" title="הגדל / צמצם">' + H.ic('expand', 15) + '</button>') + '</h3><div class="wbody">';
+      if (b.content) html += '<p>' + esc(b.content) + '</p>';
+      if (b.image_url) html += '<img class="zoomable" src="' + esc(b.image_url) + '" alt="">';
+      if (b.video_url) html += '<p><a href="' + esc(b.video_url) + '" target="_blank" rel="noopener">▶ וידאו</a></p>';
+      if (b.link_url) html += '<p><a href="' + esc(b.link_url) + '" target="_blank" rel="noopener">' + esc(b.link_url) + '</a></p>';
+      if (b.category === 'open') html += '<div class="open-posts">' + (S.posts[b.id] || []).map(po => postHtml(po)).join('') + '</div>';
+      else if (!b.content && !b.image_url && !b.video_url && !b.link_url) html += '<p class="empty">אין עדיין תוכן.</p>';
+      return html + '</div>';
     }
     function renderInfo() {
-      initOpen();
-      const ids = currentIds(), st = $('#stage'), h = S.hub;
+      const ids = currentIds(), st = $('#stage'), h = S.hub, pin = pinnedId();
       const bg = h.background_image_url && h.bg_in_hub !== false ? h.background_image_url : '';
       st.style.backgroundImage = bg ? 'url(' + bg + ')' : '';
-      const w = $('#windows'); const shown = S.full && S.full.startsWith('win:') ? ids.filter(id => 'win:' + id === S.full) : ids;
-      const nW = shown.length + (S.cardOpen && !(S.full && S.full.startsWith('win:')) ? 1 : 0);
-      w.className = 'windows n' + Math.max(1, Math.min(4, nW)); w.innerHTML = '';
-      if (S.cardOpen && !(S.full && S.full.startsWith('win:'))) {
-        const cw = H.el('<div class="win cardwin"><h3>כרטיס הביקור</h3><div class="wbody cwb" id="cardHost"></div></div>'); w.appendChild(cw);
-        if (S.cardView) S.cardView.destroy();
-        const showCard = d => { S.cardView = H.hubCard(H.$('#cardHost', cw), d, { mini: true }); };
-        if (S.cardData) showCard(S.cardData); else if (cfg.getCard) cfg.getCard().then(d => { S.cardData = d; if (S.cardOpen) showCard(d); }).catch(() => { });
-      }
-      shown.forEach(id => {
+      const w = $('#windows'); w.className = 'windows n' + Math.max(1, Math.min(4, ids.length)); w.innerHTML = '';
+      ids.forEach(id => {
         const b = blockBy(id);
         const win = H.el('<div class="win" data-id="' + id + '"></div>');
-        let html = '<h3>' + esc(b.title) + '<button class="wexp expand" data-full="win:' + id + '" title="הגדל">' + H.ic('expand', 15) + '</button></h3><div class="wbody">';
-        if (b.content) html += '<p>' + esc(b.content) + '</p>';
-        if (b.image_url) html += '<img src="' + esc(b.image_url) + '" alt="">';
-        if (b.video_url) html += '<p><a href="' + esc(b.video_url) + '" target="_blank" rel="noopener">▶ וידאו</a></p>';
-        if (b.link_url) html += '<p><a href="' + esc(b.link_url) + '" target="_blank" rel="noopener">' + esc(b.link_url) + '</a></p>';
-        if (b.category === 'open') html += '<div class="open-posts">' + (S.posts[id] || []).map(po => postHtml(po)).join('') + '</div>';
-        else if (!b.content && !b.image_url && !b.video_url && !b.link_url) html += '<p class="empty">אין עדיין תוכן.</p>';
-        html += '</div>';
+        let html = winHtml(b);
         if (b.category === 'open') html += `<div class="upl"><input type="text" class="uText" placeholder="כתוב כאן הודעה לכולם..." ${canPostNow() ? '' : 'disabled'}><input type="text" class="uVid" placeholder="לינק לווידאו (רשות)" ${canPostNow() ? '' : 'disabled'}>
           <div class="urow"><label>העלאת תמונה<input type="file" class="uImg" accept="image/*" hidden></label><span class="uImgName" style="font-size:12px;color:var(--muted);align-self:center"></span><button class="go" ${canPostNow() ? '' : 'disabled'}>פרסם</button></div></div>`;
         win.innerHTML = html; w.appendChild(win);
-        if (b.category === 'open') wireOpen(win, b);
+        if (b.category === 'open') { wireOpen(win, b); S.newPosts[id] = 0; }
         H.$$('.pdel', win).forEach(x => x.onclick = () => cfg.onDeleteOpen && cfg.onDeleteOpen(x.dataset.id));
       });
-      const on = new Set(ids);
-      /* bottom bar: people + messages (right), authority windows (left) */
-      let bar = '<button class="ibtn2 ' + (S.peopleOpen ? 'on' : '') + '" id="bbP"><span class="ic">' + H.ic('users', 17) + '</span><span class="lb">רשימת האנשים</span></button>' +
-        '<button class="ibtn2 ' + (S.msgsOpen ? 'on' : '') + '" id="bbM"><span class="ic">' + H.ic('chat', 17) + '</span><span class="lb">הודעות</span></button><span class="bb-sp"></span>';
-      bar += S.blocks.map(b => '<button class="ibtn2 cm ' + (on.has(b.id) ? 'on' : '') + '" data-id="' + b.id + '"><span class="ic">' + H.ic(H.iconForBlock(b), 17) + '</span><span class="lb">' + esc(b.title) + '</span></button>').join('');
-      $('#btnbar').innerHTML = bar;
-      $('#bbP').onclick = () => { S.peopleOpen = !S.peopleOpen; S.full = null; update(); };
-      $('#bbM').onclick = () => { S.msgsOpen = !S.msgsOpen; S.full = null; update(); };
-      H.$$('#btnbar .ibtn2[data-id]', host).forEach(x => x.onclick = () => pickField(x.dataset.id));
-      H.$$('.expand', host).forEach(b => b.onclick = e => { e.stopPropagation(); S.full = b.dataset.full; update(); });
+      renderBar();
+      wireExpand();
       applyLayout();
     }
+    function renderBar() {
+      const ids = currentIds(), on = new Set(ids), pin = pinnedId();
+      const reg = S.people.length, pres = S.people.filter(p => p.is_physical).length;
+      const nn = S.newMsgs > 20 ? '20+' : S.newMsgs;
+      let bar = '<button class="ibtn2 ' + (S.peopleOpen ? 'on' : '') + '" id="bbP"><span class="ic">' + H.ic('users', 17) + '</span><span class="lbxx"><span class="lb">רשימת האנשים</span><span class="bcnt" id="bbPc"><i>ר׳</i> <b>' + reg + '</b> <i>נ׳</i> <b>' + pres + '</b></span></span></button>' +
+        '<button class="ibtn2 ' + (S.msgsOpen ? 'on' : '') + '" id="bbM"><span class="ic">' + H.ic('chat', 17) + '</span><span class="lbxx"><span class="lb">הודעות</span>' + (S.newMsgs > 0 && !S.msgsOpen ? '<span class="bcnt"><span class="nb">' + nn + '</span></span>' : '') + '</span></button><span class="bb-sp"></span>';
+      bar += S.blocks.filter(b => b.id !== pin && b.is_visible !== false).map(b => {
+        const np = b.category === 'open' && !on.has(b.id) ? (S.newPosts[b.id] || 0) : 0;
+        return '<button class="ibtn2 cm ' + (on.has(b.id) ? 'on' : '') + '" data-id="' + b.id + '"><span class="ic">' + H.ic(H.iconForBlock(b), 17) + '</span><span class="lbxx"><span class="lb">' + esc(b.title) + '</span>' + (np ? '<span class="bcnt"><span class="nb">' + (np > 20 ? '20+' : np) + '</span></span>' : '') + '</span></button>';
+      }).join('');
+      const hh = S.hub, org = hh.organizer_names_visible !== false && hh.organizer_names ? '<span class="orgname" title="' + esc(hh.organizer_names) + '">' + (hh.hub_type === 'business' ? 'בעלי העסק: ' : 'מארגנים: ') + esc(hh.organizer_names) + '</span>' : '';
+      bar += org;
+      $('#btnbar').innerHTML = bar;
+      $('#bbP').onclick = () => { S.peopleOpen = !S.peopleOpen; if (S.peopleOpen && S.full && S.full.startsWith('win:')) S.full = null; if (!S.peopleOpen && S.full === 'people') S.full = null; saveView(); update(); if (S.peopleOpen && wideMq.matches) scrollTo('#colP'); };
+      $('#bbM').onclick = () => { S.msgsOpen = !S.msgsOpen; if (S.msgsOpen && S.full && S.full.startsWith('win:')) S.full = null; if (S.msgsOpen) S.newMsgs = 0; if (!S.msgsOpen && S.full === 'msgs') S.full = null; saveView(); update(); if (S.msgsOpen && wideMq.matches) scrollTo('#colM'); };
+      H.$$('#btnbar .ibtn2[data-id]', host).forEach(x => x.onclick = () => pickField(x.dataset.id));
+    }
+    function renderCounts() { const c = $('#bbPc'); if (!c) return; const reg = S.people.length, pres = S.people.filter(p => p.is_physical).length; c.innerHTML = '<i>ר׳</i> <b>' + reg + '</b> <i>נ׳</i> <b>' + pres + '</b>'; }
+    const scrollTo = sel => setTimeout(() => { const e = $(sel); if (e) e.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 60);
+    function toggleFull(key) { S.full = S.full === key ? null : key; update(); }
+    function wireExpand() {
+      H.$$('.expand', host).forEach(b => b.onclick = e => { e.stopPropagation(); toggleFull(b.dataset.full); });
+      H.$$('[data-x]', host).forEach(h => h.onclick = e => { if (e.target.closest('button')) return; toggleFull(h.dataset.x); });
+    }
     const update = () => { renderInfo(); renderPeople(); renderMsgs(); };
-    $('#minBtn').onclick = () => { S.full = null; update(); };
+    wireExpand();
     wideMq.addEventListener && wideMq.addEventListener('change', () => { S.full = null; update(); });
     function postHtml(po) {
       const canDel = !ro && (po.user_id === S.myId || cfg.isOwner);
@@ -393,27 +413,18 @@
       };
     }
     function pickField(id) {
-      initOpen();
-      const i = S.openIds.indexOf(id);
-      if (i >= 0) S.openIds.splice(i, 1);
-      else if (S.openIds.length >= MAXWIN) return H.toast('ניתן לפתוח עד שלושה חלונות רשות בו זמנית');
-      else S.openIds.push(id);
-      S.full = null; renderInfo();
+      currentIds(); const i = S.openIds.indexOf(id);
+      if (i >= 0) { S.openIds.splice(i, 1); if (S.full === 'win:' + id) S.full = null; }
+      else {
+        if (currentIds().length >= MAXWIN) return H.toast('ניתן לפתוח עד ארבעה חלונות רשות בו זמנית. סגור חלון אחר כדי לפתוח חלון נוסף.', 4500);
+        S.openIds.push(id);
+      }
+      saveView(); renderInfo();
+      if (i < 0 && wideMq.matches) scrollTo('#infoArea');
     }
 
-    /* ---------------- footer: organizers, report, business card, share ---------------- */
-    function renderFoot() {
-      const h = S.hub, f = $('#hubFoot');
-      const org = h.organizer_names_visible !== false && h.organizer_names ? '<span class="org">' + (h.hub_type === 'business' ? 'בעלי העסק: ' : 'מארגנים: ') + esc(h.organizer_names) + '</span>' : '';
-      f.innerHTML = org + '<span class="fsp"></span>' +
-        (ro ? '' : '<button class="fbtn" id="ftReport">' + H.ic('chart', 15) + ' דו"ח</button>') +
-        (h.has_card && !ro ? '<label class="fchk"><input type="checkbox" id="ftCard" ' + (S.cardOpen ? 'checked' : '') + '><span class="cbx"></span>צפה בכרטיס הביקור</label>' : '') +
-        (ro ? '' : '<button class="fbtn" id="ftShare">' + H.ic('share', 15) + ' שתף</button>');
-      const rp = $('#ftReport'); if (rp) rp.onclick = () => cfg.onReport && cfg.onReport();
-      const sh = $('#ftShare'); if (sh) sh.onclick = () => cfg.onShare && cfg.onShare();
-      const cc = $('#ftCard');
-      if (cc) cc.onchange = () => { S.cardOpen = cc.checked; if (!cc.checked && S.cardView) { S.cardView.destroy(); S.cardView = null; } if (cc.checked) cfg.onCardOn && cfg.onCardOn(); S.full = null; renderInfo(); };
-    }
+    /* ---------------- footer: organizers, report, pass-through-card option ---------------- */
+    function renderFoot() { /* the old bottom row moved into the hub menu (top bar) */ }
 
     /* ---------------- notices (location / code verification) ---------------- */
     let noteTimers = [];
@@ -424,7 +435,7 @@
       const el = H.el('<div class="vnote ' + (o.blink ? 'blink' : '') + '"><div class="vt-msg">' + o.html + '</div>' + (o.input ? '<input class="field-in vn-in" type="text" placeholder="' + esc(o.input) + '">' : '') + '<div class="vn-err"></div>' + (o.timer ? '<div class="vtm" style="animation-duration:' + o.timer + 's"></div>' : '') + (o.buttons ? '<div class="opts"></div>' : '') + (o.note ? '<small>' + o.note + '</small>' : '') + '</div>');
       if (o.buttons) o.buttons.forEach(b => { const x = H.el('<button class="btn ' + (b.pri ? 'primary' : '') + '">' + esc(b.label) + '</button>'); x.onclick = () => { const inp = H.$('.vn-in', el); const r = b.onClick && b.onClick(inp ? inp.value.trim() : '', msg => { H.$('.vn-err', el).textContent = msg; }); if (r !== false) clearNote(); }; H.$('.opts', el).appendChild(x); });
       host_.appendChild(el);
-      const bd = $('.band'); if (bd) host_.style.top = (bd.offsetTop + bd.offsetHeight + 6) + 'px';
+      const bd = $('#band'), hw = $('#hubwrap'); if (bd && hw) host_.style.top = Math.max(4, bd.getBoundingClientRect().bottom - hw.getBoundingClientRect().top + 6) + 'px';
       if (o.blinkFor) noteTimers.push(setTimeout(() => el.classList.remove('blink'), o.blinkFor * 1000));
       if (o.ttl) noteTimers.push(setTimeout(() => { clearNote(); o.onExpire && o.onExpire(); }, o.ttl * 1000));
       return el;
@@ -436,13 +447,17 @@
     const v = {
       S, host,
       setHub(h) { S.hub = h; renderBand(); renderInfo(); renderPeople(); },
-      setBlocks(blocks, posts) { S.blocks = blocks || []; if (posts) S.posts = posts; S.openIds = null; renderInfo(); },
+      setBlocks(blocks, posts) { S.blocks = blocks || []; if (posts) S.posts = posts; renderInfo(); },
+      winHtml, blocks: () => S.blocks.filter(b => b.is_visible !== false),
+      setFav(v) { S.isFav = !!v; const fv = $('#bFav'); if (fv) fv.innerHTML = H.starSvg(S.isFav); },
+      isFull: () => !!S.full, collapse() { S.full = null; update(); },
+      setSeen(ts) { const me_ = S.myId; S.newMsgs = S.board.filter(m => m.ts > ts && m.sender_user_id !== me_).length; Object.keys(S.posts).forEach(k => { S.newPosts[k] = (S.posts[k] || []).filter(x => x.ts > ts && x.user_id !== me_).length; }); renderBar(); },
       setPeople(list) { S.people = list; const m = list.find(p => p.user_id === S.myId); if (m) S.myStatus = m.status; renderPeople(); renderMsgs(); renderInfo(); },
       setBoard(list) { S.board = list; renderMsgs(); },
-      addBoard(m) { if (!S.board.find(x => x.id === m.id)) S.board.push(m); renderMsgs(); },
+      addBoard(m) { if (!S.board.find(x => x.id === m.id)) { S.board.push(m); if (!S.msgsOpen && m.sender_user_id !== S.myId) { S.newMsgs++; renderBar(); } } renderMsgs(); },
       removeBoard(id) { S.board = S.board.filter(x => x.id !== id); renderMsgs(); },
       updateBoard(m) { S.board = S.board.map(x => x.id === m.id ? m : x); renderMsgs(); },
-      addPost(po) { (S.posts[po.block_id] = S.posts[po.block_id] || []).push(po); renderInfo(); },
+      addPost(po) { (S.posts[po.block_id] = S.posts[po.block_id] || []).push(po); if (!currentIds().includes(po.block_id) && po.user_id !== S.myId) S.newPosts[po.block_id] = (S.newPosts[po.block_id] || 0) + 1; renderInfo(); },
       removePost(id, bid) { S.posts[bid] = (S.posts[bid] || []).filter(x => x.id !== id); renderInfo(); },
       setContacts(uids) { S.contactIds = new Set(uids); renderPeople(); },
       pmIncoming(m) {
@@ -454,8 +469,7 @@
       },
       pmRemoved(id) { S.pmMsgs = S.pmMsgs.filter(x => x.id !== id); if (S.msgTab === 'private') renderMsgs(); },
       openThread, openCard, notice, clearNote,
-      setCardData(d) { S.cardData = d; },
-      destroy() { clearInterval(pinTimer); clearTimeout(S.timer); clearNote(); if (S.cardView) S.cardView.destroy(); },
+      destroy() { clearInterval(pinTimer); clearTimeout(S.timer); clearNote(); },
       refreshFoot: renderFoot,
       renderAll() { renderBand(); renderPeople(); renderMsgs(); renderInfo(); },
     };
@@ -477,7 +491,7 @@
   /* simple sharing (full sharing flow arrives in 15ג): native share sheet, else copy the link */
   H.shareHubLink = async (hubId, name) => {
     const url = location.origin + '/?hub=' + hubId;
-    try { if (navigator.share) { await navigator.share({ title: 'HUBBLE — ' + name, text: 'הוזמנת להאב "' + name + '"', url }); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
+    try { if (navigator.share) { await navigator.share({ title: 'HUBIN — ' + name, text: 'הוזמנת להאב "' + name + '"', url }); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
     try { await navigator.clipboard.writeText(url); H.toast('הקישור להאב הועתק'); } catch (e) { H.toast(url, 6000); }
   };
 
@@ -487,14 +501,20 @@
     const scr = H.el('<div class="screen hubscr"></div>');
     root.appendChild(scr); H.screenRoot = scr;
     H.suppressPmToast = false;
+    const hub0fav = false;
     const bar = H.topbar({
-      tools: `<div class="tbtns" style="display:flex;gap:6px"><button class="tbtn hidden" id="btnManage">${H.ic('gear', 22)}ניהול ההאב <span class="badge hidden" id="pendBadge" style="margin-inline-start:2px"></span></button></div><span class="tag hidden" id="physChip"></span>`
+      tools: `<span class="tag hidden" id="physChip" role="button"></span><div class="tbtns" style="display:flex;gap:6px"><button class="tbtn hidden" id="btnManage">${H.ic('gear', 22)}<span class="tbl">ניהול ההאב</span> <span class="badge hidden" id="pendBadge" style="margin-inline-start:2px"></span></button></div>`
     });
+    bar.classList.add('hubtop');
+    const bandHost = H.el('<div class="tz tband"></div>'); bar.insertBefore(bandHost, H.$('.tc', bar)); H.$('.tc', bar).classList.add('hubword');
     scr.appendChild(bar);
+    /* the app logo returns from an expanded window first; otherwise goes home */
+    const tbl = H.$('#tbLogo', bar); tbl.onclick = () => { if (menuModal) menuModal.close(); else if (cardOv) cardOv.close(); else if (view && view.isFull()) view.collapse(); else H.go('home'); };
     const body = H.el('<div class="hubview" id="hubview"></div>'); scr.appendChild(body);
 
     let hub = null, view = null, cache = { people: [], pending: 0 }, isOwner = false, myId = H.me.user_id, ended = false;
-    let lastPos = null, reverify = null, verifying = false, cardGateView = null;
+    let lastPos = null, reverify = null, verifying = false, cardGateView = null, favState = !!hub0fav;
+    let skipNow = false; const seenKey = 'hubin_seen_' + hubId;
 
     const gate = (html, extra) => {
       if (view) { view.destroy(); view = null; }
@@ -505,7 +525,7 @@
     const wireHome = () => { const b = H.$('#gHome', body); if (b) b.onclick = () => H.go('home'); };
 
     /* 1. hub info */
-    try { hub = await H.get('/api/hubs/' + hubId); }
+    try { hub = await H.get('/api/hubs/' + hubId); favState = !!hub.is_favorite; }
     catch (e) { gate(esc(e.message), homeBtn); wireHome(); return; }
     if (hub.is_published === false && hub.is_mine && !p.preview) { H.go('setup', { hub_id: hubId, type: hub.hub_type }); return; }
 
@@ -517,6 +537,7 @@
 
     /* 2. business card first (unless the user chose not to see it again) */
     const skipCard = ((H.me.prefs || {}).skip_cards || []).includes(hubId);
+    skipNow = skipCard; let wasSkipped = skipCard;
     if (hub.has_card && !skipCard && !p.nocard) {
       let d; try { d = await H.get('/api/hubs/' + hubId + '/card'); } catch (e) { d = null; }
       if (d && d.has_card) {
@@ -527,9 +548,9 @@
           cardGateView = H.hubCard(h, d, {
             onBack: () => H.go('home'),
             onEnter: () => { cardGateView.destroy(); cardGateView = null; bar.classList.remove('hidden'); body.innerHTML = ''; res(); },
-            onFav: async () => { const r = await H.post('/api/hubs/' + hubId + '/favorite'); d.is_favorite = r.is_favorite; H.$('#bcFav', h).innerHTML = H.starSvg(r.is_favorite); },
-            onShare: () => H.shareHubLink(hubId, d.name),
-            onSkip: sk => H.setSkipCard(hubId, sk),
+            onFav: async () => { const r = await H.post('/api/hubs/' + hubId + '/favorite'); d.is_favorite = r.is_favorite; const fb = H.$('#bcFav', h); fb.innerHTML = H.starSvg(r.is_favorite); fb.classList.toggle('on', !!r.is_favorite); },
+            onShare: () => H.shareFlow({ hub: { hub_id: hubId, name: d.name || hub.name, serial: hub.serial } }),
+            onSkip: sk => { skipNow = sk; wasSkipped = wasSkipped || sk; H.setSkipCard(hubId, sk); },
           });
           H.cleanup = () => { ended = true; if (cardGateView) cardGateView.destroy(); };
         });
@@ -576,7 +597,7 @@
       if (usesLoc) buttons.push({ label: 'אני נמצא בהאב', pri: true, onClick: () => H.emit('verify_presence', { claim: true }) });
       buttons.push({ label: 'נכנס מרחוק', onClick: () => { } });
       if (usesLoc) buttons.push({ label: 'נסה שוב', onClick: () => { setTimeout(startVerify, 50); } });
-      view.notice({ html: '<b>לא הצלחנו לאמת מיקום</b><br>' + (reason || 'אתה נמצא בהאב? אפשר לאשר ידנית או להיכנס מרחוק.'), buttons, ttl: 10, note: 'אם לא תבחר, תוגדר כנכנס מרחוק. הכניסה להאב מותרת בכל מקרה.',
+      view.notice({ html: '<b>לא הצלחנו לאמת מיקום</b><br>' + (reason || 'אתה נמצא בהאב? אפשר לאשר ידנית או להיכנס מרחוק.'), buttons, ttl: 60, note: 'אם לא תבחר, תוגדר כנכנס מרחוק. הכניסה להאב מותרת בכל מקרה.',
         input: usesCode ? 'או הזן קוד כניסה' : undefined });
       if (usesCode) { /* code entry: the input above is used by an extra button */
         const o = H.$('.vnote .opts', body); if (o) { const x = H.el('<button class="btn">אמת בקוד</button>'); x.onclick = () => { const v = (H.$('.vnote .vn-in', body) || {}).value || ''; if (!v.trim()) { H.$('.vnote .vn-err', body).textContent = 'יש להזין קוד'; return; } H.emit('verify_presence', { code: v.trim(), ...(lastPos || {}) }); view.clearNote(); }; o.appendChild(x); }
@@ -594,7 +615,7 @@
         remove: id => H.del('/api/messages/' + id),
       };
       view = H.hubView(body, {
-        hub, blocks: st.blocks, posts: st.open_posts, board: st.board, myId, myStatus: st.my_status, isOwner, pm,
+        bandHost, isFav: favState, hub, blocks: st.blocks, posts: st.open_posts, board: st.board, myId, myStatus: st.my_status, isOwner, pm,
         people: cache.people,
         onToggleStatus: s => H.emit('set_status', { status: s }),
         onSendBoard: d => H.emit('send_board_message', d),
@@ -605,23 +626,24 @@
         onVerify: () => { verifying = false; startVerify(); },
         onUnreadChange: () => H.sockGlobal.unread_changed.forEach(f => f()),
         onReport: () => reportFlow(),
-        onShare: () => H.shareHubLink(hubId, hub.name),
-        getCard: () => H.get('/api/hubs/' + hubId + '/card'),
-        onCardOn: () => H.setSkipCard(hubId, false),
+        onShare: () => H.shareFlow({ hub: { hub_id: hubId, name: hub.name, serial: hub.serial }, view }),
+        onFav: async () => { const r = await H.post('/api/hubs/' + hubId + '/favorite'); favState = r.is_favorite; return favState; },
+        onBandClick: () => showCardAgain(),
       });
+      try { view.setSeen(parseFloat(localStorage.getItem(seenKey) || '0') || 0); } catch (e) { }
       H.get('/api/contacts').then(cs => view && view.setContacts(cs.map(c => c.user_id))).catch(() => { });
-      H.$('#btnManage', bar).classList.toggle('hidden', !isOwner);
+      H.$('#btnManage', bar).classList.remove('hidden');
       updateChip(st.my_physical);
       if (mode !== 'none' && !st.my_physical && !isOwner) setTimeout(startVerify, 300);
     };
     const updateChip = phys => {
       const c = H.$('#physChip', bar);
       if (!hub || (hub.presence_mode || 'none') === 'none') { c.classList.add('hidden'); return; }
-      c.classList.remove('hidden'); c.textContent = phys ? 'נוכח פיזית' : 'כניסה מרחוק';
+      c.classList.remove('hidden'); c.textContent = phys ? 'נוכח פיזית' : 'מרחוק — לחץ לאימות'; c.classList.toggle('btnlike', !phys); c.onclick = phys ? null : () => { verifying = false; startVerify(); };
     };
 
     /* sockets */
-    H.onSock('hub_state', st => { if (ended) return; H.setUnread(H.me.unread); buildView(st); if (cache.people.length) view.setPeople(cache.people); });
+    H.onSock('hub_state', st => { if (ended) return; H.setUnread(H.me.unread); if (!view) H.sound('hub_enter'); buildView(st); if (cache.people.length) view.setPeople(cache.people); });
     H.onSock('presence_list', list => { if (cache.people.length && list.length > cache.people.length) H.sound('hub_join'); cache.people = list; if (view) { view.setPeople(list); const m = list.find(x => x.user_id === myId); if (m) updateChip(m.is_physical); } });
     H.onSock('pending_list', d => {
       if (d.hub_id !== hubId) return; cache.pending = d.pending.length;
@@ -665,7 +687,40 @@
     if (usesLoc) reverify = setInterval(async () => { if (verifying) return; const pos = await H.getPosition(8000); if (pos) { lastPos = pos; H.emit('verify_presence', { code: p.code || '', ...pos, silent: true }); } }, 5 * 60 * 1000);
 
     /* toolbar buttons */
-    H.$('#btnManage', bar).onclick = () => H.go('manage', { hub_id: hubId });
+    H.$('#btnManage', bar).onclick = openMenu;
+
+    /* ---- hub menu (top bar): reports, business card option, share, hub sounds ---- */
+    let menuModal = null, cardOv = null;
+    const muteKey = 'hubin_mute_' + hubId;
+    try { H.hubMuted = localStorage.getItem(muteKey) === '1'; } catch (e) { H.hubMuted = false; }
+    function openMenu() {
+      if (menuModal) return;
+      const body = H.el('<div class="hubmenu"></div>');
+      const row = (label, ic, fn) => { const b = H.el('<button class="mrow3">' + H.ic(ic, 18) + '<span>' + label + '</span></button>'); b.onclick = fn; body.appendChild(b); return b; };
+      if (isOwner) row('מסך ניהול ההאב המלא', 'gear', () => { menuModal.close(); H.go('manage', { hub_id: hubId }); });
+      row('דוחות', 'chart', () => { menuModal.close(); reportFlow(); });
+      if (hub.has_card) row(skipNow ? 'הצג כרטיס ביקור בכניסה להאב' : 'אל תציג כרטיס ביקור בכניסה להאב', 'eyeoff', async () => { skipNow = !skipNow; await H.setSkipCard(hubId, skipNow); menuModal.close(); H.toast(skipNow ? 'כרטיס הביקור לא יוצג בכניסה' : 'כרטיס הביקור יוצג בכניסה'); });
+      row('הדרכה: איך עובדים בהאב', 'info', () => { menuModal.close(); H.tour({ group: 'hub' }); });
+      row('שתף ההאב', 'share', () => { menuModal.close(); H.shareFlow({ hub: { hub_id: hubId, name: hub.name, serial: hub.serial } }); });
+      row(H.hubMuted ? 'הפעל התרעות קוליות בהאב' : 'כבה התרעות קוליות מההאב', 'bell', () => { H.hubMuted = !H.hubMuted; try { localStorage.setItem(muteKey, H.hubMuted ? '1' : '0'); } catch (e) { } menuModal.close(); H.toast(H.hubMuted ? 'התרעות קוליות כבויות בהאב זה' : 'התרעות קוליות פעילות'); });
+      menuModal = H.modal({ title: 'ניהול ההאב – ' + esc(hub.name), body, cls: 'hubmenu', actions: [{ label: 'חזרה להאב', cls: 'primary' }], onClose: () => { menuModal = null; } });
+      const tb = bar.getBoundingClientRect(); menuModal.ov.style.top = Math.round(tb.bottom) + 'px';
+    }
+    async function showCardAgain() {
+      if (cardOv || !hub || !hub.has_card) return;
+      let d; try { d = await H.get('/api/hubs/' + hubId + '/card'); } catch (e) { return; }
+      if (!d || !d.has_card) return;
+      d.skip = skipNow; d.is_favorite = favState;
+      const ov = H.el('<div class="bcgate bcover"></div>'); scr.appendChild(ov);
+      let cv = null; const close = () => { if (cv) cv.destroy(); ov.remove(); cardOv = null; };
+      cv = H.hubCard(ov, d, {
+        enterLabel: 'חזרה להאב', onBack: close, onEnter: close,
+        onFav: async () => { const r = await H.post('/api/hubs/' + hubId + '/favorite'); favState = r.is_favorite; const fb = H.$('#bcFav', ov); fb.innerHTML = H.starSvg(r.is_favorite); fb.classList.toggle('on', !!r.is_favorite); if (view) view.setFav(favState); },
+        onShare: () => H.shareFlow({ hub: { hub_id: hubId, name: d.name || hub.name, serial: hub.serial } }),
+        onSkip: sk => { skipNow = sk; H.setSkipCard(hubId, sk); },
+      });
+      cardOv = { close };
+    }
 
     /* report */
     async function reportFlow() {
@@ -685,7 +740,7 @@
       });
     }
     function showReport(rep, o) {
-      const h = rep.hub; let html = '<div class="bar noprint"><button class="pri" id="repPrint">הדפס / שמור כ-PDF</button><button id="repClose">סגור</button></div>';
+      const h = rep.hub; let html = '<div class="bar noprint"><button class="pri" id="repPrint">הדפס / שמור כ-PDF</button><button id="repShare">שתף</button><button id="repClose">סגור</button></div>';
       if (o.logo && h.logo_url && h.logo_visible) html += '<img class="rlogo" src="' + esc(h.logo_url) + '" alt="">';
       html += '<h1>' + esc(h.name) + '</h1>';
       if (o.sub && h.tagline) html += '<div>' + esc(h.tagline) + '</div>';
@@ -704,10 +759,12 @@
       document.body.appendChild(ov);
       H.$('#repClose', ov).onclick = () => ov.remove();
       H.$('#repPrint', ov).onclick = () => window.print();
+      H.$('#repShare', ov).onclick = () => H.shareReport({ hub: { hub_id: hubId, name: h.name, serial: h.serial }, el: H.$('.rep', ov) });
     }
 
     H.cleanup = () => {
-      ended = true; clearInterval(reverify);
+      ended = true; clearInterval(reverify); H.hubMuted = false;
+      try { localStorage.setItem(seenKey, String(Date.now() / 1000)); } catch (e) { }
       if (view) view.destroy();
       if (H.sock) H.sock.io.off('reconnect', onRe);
       H.emit('leave_hub');

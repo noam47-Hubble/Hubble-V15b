@@ -86,12 +86,10 @@
       w.innerHTML = '';
       w.appendChild(H.topbar({ title: card ? 'עריכת כרטיס' : (type === 'business' ? 'כרטיס עסקי חדש' : 'כרטיס חברתי חדש') }));
       const pg = H.el('<div class="page"></div>'); w.appendChild(pg);
-      const fieldRow = f => `<div class="row cf-row"><span class="lbl">${LABELS[f]}${f === 'name' ? ' *' : ''}</span><input type="text" data-f="${f}" value="${H.esc(st[f] || '')}" placeholder="${f === 'name' ? 'חובה' : ''}">
-        ${f === 'name' ? '<span class="vis" title="השם הוא שדה חובה אבל אפשר להסתיר אותו"></span>' : ''}
+      const fieldRow = f => `<div class="row cf-row"><span class="lbl">${LABELS[f]}</span><input type="text" data-f="${f}" value="${H.esc(st[f] || '')}" placeholder="">
         <label class="vis chk"><input type="checkbox" data-v="${f}" ${st[f + '_visible'] ? 'checked' : ''}>מוצג</label></div>`;
       pg.innerHTML = `
-        <div class="row"><span class="lbl">שם הכרטיס (פרטי)</span><input type="text" id="ceCardName" value="${H.esc(st.card_name)}" placeholder="${type === 'business' ? 'כרטיס עסקי' : 'כרטיס חברתי'}"></div>
-        <div class="hint-small">רק אתה רואה שם זה</div>
+        <div class="row"><span class="lbl">שם הכרטיס (רק אתה רואה שם זה)</span><input type="text" id="ceCardName" value="${H.esc(st.card_name)}" placeholder="${type === 'business' ? 'כרטיס עסקי' : 'כרטיס חברתי'}"></div>
         ${type === 'business' ? `<div class="row"><span class="lbl">תואר</span><input type="text" id="ceDegree" value="${H.esc(st.degree)}" placeholder="ד״ר, עו״ד, מהנדס..."></div>` : ''}
         <div class="row clickable" id="ceMoodRow"><span class="lbl">מצב רוח</span><span class="grow" id="ceMoodVal" style="font-size:22px">${st.mood || '<span class="small">לא נבחר</span>'}</span><span class="small">בחירה</span></div>
         <div class="emojis hidden" id="ceMoods">${MOODS.map(e => '<span data-e="' + e + '" class="' + (st.mood === e ? 'on' : '') + '">' + e + '</span>').join('')}<span data-e="" style="font-size:13px;grid-column:span 5">ללא</span></div>
@@ -190,7 +188,6 @@
       };
       H.$('#ceSave', pg).onclick = async () => {
         const d = read(); const err = H.$('#ceErr', pg); err.textContent = '';
-        if (!d.name) { err.textContent = 'שם הוא שדה חובה'; return; }
         try {
           if (card) await H.put('/api/cards/' + card.id, d); else await H.post('/api/cards', d);
           await H.refreshMe(); H.toast('הכרטיס נשמר');

@@ -25,8 +25,9 @@
       (d.song ? '<div class="eq"><div class="bars" id="bcBars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="pp"><button class="bc-ic" id="bcPlay" title="נגן">▶</button><button class="bc-ic" id="bcStop" title="עצור">■</button></div></div>' : '') +
       '</div>' +
       '<div class="bc-bot">' + (d.message ? '<div class="bc-msg"><b>הודעת המנהל</b><br>' + esc(d.message) + '</div>' : '') +
-      (opts.mini ? '' : '<button class="btn primary lg bc-enter" id="bcEnter">כניסה להאב</button>' +
+      (opts.mini ? '' : '<button class="btn primary lg bc-enter" id="bcEnter">' + (opts.enterLabel || 'כניסה להאב') + '</button>' +
         (opts.preview ? '' : '<label class="bc-chk"><input type="checkbox" id="bcSkip"' + (d.skip ? ' checked' : '') + '><span class="cbx"></span>אל תציג שוב כרטיס ביקור בכניסה להאב זה</label>')) +
+      (d.organizers ? '<div class="bc-org">' + (d.hub_type === 'business' ? 'בעלי העסק: ' : 'מארגנים: ') + esc(d.organizers) + '</div>' : '') +
       '</div></div>';
     const $ = s => H.$(s, host);
     let audio = null;

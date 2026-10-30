@@ -54,7 +54,8 @@ t("second card active, first not", c2["is_active"] and not owner.j("get", "/api/
 t("nickname display", c2["display_name"] == "דני")
 code, c3 = owner.card(type="social", name="סתר", name_visible=False)
 t("viewer card", c3["is_viewer"] and c3["display_name"] == "צופה" and not c3["effective_open"])
-code, _ = owner.j("post", "/api/cards", json={"type": "business", "name": ""}); t("name required card", code == 400)
+code, nn = owner.j("post", "/api/cards", json={"type": "business", "name": "", "card_name": "ללא שם"}); t("name optional on card", code in (200, 201), nn)
+if code in (200, 201): owner.j("delete", f"/api/cards/{nn['id']}")
 owner.j("post", f"/api/cards/{c1['id']}/activate")
 t("activate", owner.j("get", "/api/cards")[1][0]["id"] == c1["id"])
 code, cc = owner.j("post", f"/api/cards/{c1['id']}/open", json={"open": False}); t("close card", not cc["effective_open"])
@@ -221,12 +222,20 @@ t("group name required", u3.j("post", "/api/contact-groups", json={"name": " "})
 code, g2 = u3.j("post", "/api/contact-groups", json={"name": "חברים"})
 u3.j("post", f"/api/contact-groups/{g1['id']}/members", json={"contact_ids": [cid_m, cid_o]})
 u3.j("post", f"/api/contact-groups/{g2['id']}/members", json={"contact_ids": [cid_m, cid_m]})
+# 15ב.2: members must accept the invitation first
+t("pending member gets invitation row", [x for x in u2.j("get", "/api/messages/groups")[1] if x["group_id"] == g1["id"]][0]["status"] == "pending")
+t("pending member cannot write", u2.j("post", "/api/messages/group-send", json={"group_id": g1["id"], "text": "x"})[0] == 403)
+for _g in (g1, g2):
+    u2.j("post", f"/api/groups/{_g['id']}/respond", json={"accept": True})
+u1.j("post", f"/api/groups/{g1['id']}/respond", json={"accept": True})
 cts = u3.j("get", "/api/contacts")[1]
 t("multi group membership", sorted(x["name"] for x in [c for c in cts if c["id"] == cid_m][0]["groups"]) == ["חברים", "צוות"])
 w = u3.j("get", f"/api/contact-groups/{g1['id']}/where")[1]
 lab = {x["name"]: x["label"] for x in w}
 t("where: hub name", lab["מיכל"] == "TechInnovate 2026", w)
 s2.disconnect(); w = {x["name"]: x["label"] for x in u3.j("get", f"/api/contact-groups/{g1['id']}/where")[1]}
+t("where: dropped connection stays 'in hub' for a while", w["מיכל"] == "TechInnovate 2026", w)
+A.RECENT_HUB.clear(); w = {x["name"]: x["label"] for x in u3.j("get", f"/api/contact-groups/{g1['id']}/where")[1]}
 t("where: off", w["מיכל"] == "כבוי")
 u1.j("post", f"/api/cards/{u1.j('get','/api/cards')[1][0]['id']}/open", json={"open": False})
 w = {x["name"]: x["label"] for x in u3.j("get", f"/api/contact-groups/{g1['id']}/where")[1]}
@@ -238,7 +247,7 @@ t("group message", code == 200 and r["sent"] == 2)
 gl = u2.j("get", "/api/messages/groups")[1]
 c0 = gl[0]
 t("group msg format", c0["group_name"] == "צוות" and c0["last_sender"] == "רן" and c0["unread"] == 1, c0)
-gt = u2.j("get", "/api/messages/group-thread?name=" + "צוות")[1]
+gt = u2.j("get", "/api/messages/group-thread?id=" + g1["id"])[1]
 t("group thread + read", len(gt["messages"]) == 1 and u2.j("get", "/api/messages/groups")[1][0]["unread"] == 0)
 # 15ב: real group chat — a member replies to everyone in the group
 u2.j("post", "/api/cards", json={"type": "social", "name": "x"}) if False else None
@@ -249,6 +258,14 @@ t("member sees whole group thread", [m["text"] for m in gt1["messages"]] == ["ל
 gt3 = u3.j("get", "/api/messages/group-thread?id=" + g1["id"])[1]
 t("owner sees reply once", [m["text"] for m in gt3["messages"]] == ["לכולם", "תשובה לכולם"], gt3)
 t("outsider cannot write to group", P("זר", "0509998877").j("post", "/api/messages/group-send", json={"group_id": g1["id"], "text": "x"})[0] == 403)
+gd = u2.j("get", f"/api/groups/{g1['id']}")[1]
+t("group card for a member", gd["name"] == "צוות" and gd["status"] == "active" and not gd["is_owner"] and len(gd["members"]) >= 2, gd)
+t("owner group card marks owner", u3.j("get", f"/api/groups/{g1['id']}")[1]["is_owner"])
+t("outsider has no group card", P("זר2", "0509998811").j("get", f"/api/groups/{g1['id']}")[0] == 404)
+code, lv = u1.j("post", f"/api/groups/{g1['id']}/leave"); t("member leaves group", code == 200)
+t("left member no longer in list", not any(x["group_id"] == g1["id"] for x in u1.j("get", "/api/messages/groups")[1]))
+t("owner not able to leave via member endpoint", u3.j("post", f"/api/groups/{g1['id']}/leave")[0] == 404)
+t("owner sees leave notice", any("עזב" in x["last_text"] for x in u3.j("get", "/api/messages")[1]["conversations"]))
 t("owner sees silent own group", any(x["group_id"] == g1["id"] for x in u3.j("get", "/api/messages/groups")[1]))
 t("remove member", u3.j("delete", f"/api/contact-groups/{g1['id']}/members/{cid_o}")[0] == 200 and len([c for c in u3.j("get", "/api/contacts")[1] if c["id"] == cid_o][0]["groups"]) == 0)
 t("delete contact cleans groups", u3.j("delete", f"/api/contacts/{cid_m}")[0] == 200 and u3.j("get", "/api/contact-groups")[1][0]["contact_ids"] == [])
@@ -379,6 +396,7 @@ u2.j("post", "/api/location", json={"lat": 32.0856, "lng": 34.7819, "acc": 20})
 u1.j("post", "/api/location", json={"lat": 32.3, "lng": 34.9, "acc": 20})
 cts3 = u3.j("get", "/api/contacts")[1]
 u3.j("post", f"/api/contact-groups/{gx['id']}/members", json={"contact_ids": [c["id"] for c in cts3]})
+for _u in (u1, u2): _u.j("post", f"/api/groups/{gx['id']}/respond", json={"accept": True})
 u1.j("post", f"/api/cards/{u1.j('get','/api/cards')[1][0]['id']}/open", json={"open": True})
 u2.connect(); u1.connect()
 code, nr = u3.j("get", f"/api/contact-groups/{gx['id']}/near?lat=32.0853&lng=34.7818&range=500")
@@ -438,6 +456,107 @@ t("admin manages foreign hub", adm.j("get", f"/api/hubs/{hid2}/manage")[0] == 20
 t("admin sees is_mine", [h for h in adm.j("get", "/api/hubs")[1] if h["hub_id"] == hid2][0]["is_mine"] is True)
 t("non-admin cannot", vis.j("get", f"/api/hubs/{hid2}/manage")[0] == 403)
 
+# ---- 15ב.2: decline an invitation removes the member
+_o = P("מקים ב", "0551110021"); _o.card(type="business", name="מקים", name_visible=True)
+_m = P("מוזמן ב", "0551110022"); _m.card(type="business", name="מוזמן", name_visible=True)
+_oid = _o.j("get", "/api/me")[1]["user_id"]; _mid = _m.j("get", "/api/me")[1]["user_id"]
+_o.j("post", "/api/contacts", json={"user_id": _mid}); _m.j("post", "/api/contacts", json={"user_id": _oid})
+_gg = _o.j("post", "/api/contact-groups", json={"name": "דחייה"})[1]
+_cc = _o.j("get", "/api/contacts")[1][0]["id"]
+_o.j("post", f"/api/contact-groups/{_gg['id']}/members", json={"contact_ids": [_cc]})
+t("invitee gets a system notice", any("צורפת לקבוצה" in x["last_text"] for x in _m.j("get", "/api/messages")[1]["conversations"]))
+t("decline ok", _m.j("post", f"/api/groups/{_gg['id']}/respond", json={"accept": False})[0] == 200)
+t("declined user removed from owner's group", _o.j("get", "/api/contact-groups")[1][0]["contact_ids"] == [])
+t("owner told about decline", any("דחה" in x["last_text"] for x in _o.j("get", "/api/messages")[1]["conversations"]))
+t("no invitation left after decline", _m.j("post", f"/api/groups/{_gg['id']}/respond", json={"accept": True})[0] == 404)
+# ---- 15ב.2: people search
+_ps = u3.j("get", "/api/people/search?mode=name&q=" + "מיכל")[1]
+t("people search by name returns open people only", isinstance(_ps, list) and all("card" in x for x in _ps), _ps)
+t("people search short query empty", u3.j("get", "/api/people/search?q=a")[1] == [])
+t("people hubs list", isinstance(u3.j("get", "/api/people/hubs")[1], list))
+t("people by hub needs membership", P("זר3", "0509998812").j("get", f"/api/people/search?mode=hub&hub_id={hid}")[0] == 403)
+t("people by hub", len(u3.j("get", f"/api/people/search?mode=hub&hub_id={hid}")[1]) >= 1)
+# ---- 15ב.3: sample hubs
+_adm = adm; _adm.card(type="business", name="אדמין", name_visible=True)
+_reg = P("רגיל", "0551110031"); _reg.card(type="business", name="רגיל", name_visible=True)
+t("demo loader needs admin", _reg.j("post", "/api/admin/demo", json={})[0] == 403)
+import time as _t; _t0 = _t.time()
+code, dr = _adm.j("post", "/api/admin/demo", json={})
+t("demo loader creates 9 hubs", code == 200 and len(dr["hubs"]) == 9, dr)
+t("3 hubs of each type", sorted(h["type"] for h in dr["hubs"]) == ["business"] * 3 + ["professional"] * 3 + ["social"] * 3)
+t("demo hubs have registrants", all(h["registered"] >= 25 for h in dr["hubs"]), [h["registered"] for h in dr["hubs"]])
+mine = [h for h in _adm.j("get", "/api/hubs?filter=mine")[1] if h.get("is_mine")] if False else None
+_h0 = dr["hubs"][0]["hub_id"]
+t("admin owns demo hub", _adm.j("get", f"/api/hubs/{_h0}")[1].get("is_mine") is True)
+_pc = _reg.j("get", f"/api/hubs/{_h0}/card")[1]; t("demo hub card has counts", _pc["registered"] >= 25 and _pc["present"] >= 1, _pc)
+t("demo loader not twice", _adm.j("post", "/api/admin/demo", json={})[0] == 409)
+code, rm = _adm.j("delete", "/api/admin/demo"); t("demo removal", code == 200 and rm["removed"] == 9)
+t("demo hubs gone", _adm.j("get", f"/api/hubs/{_h0}")[0] == 404)
+t("demo can load again after removal", _adm.j("post", "/api/admin/demo", json={})[0] == 200 and _adm.j("delete", "/api/admin/demo")[1]["removed"] == 9)
+print("demo seconds", round(_t.time() - _t0, 1))
+# ---- 15ב.1: sharing with pictures / file, file download, lock, near range, social card in professional hub, legacy groups
+sa = P("שולח", "0551110001"); sa.card(type="business", name="שולח", name_visible=True)
+rb = P("מקבל", "0551110002"); rb.card(type="business", name="מקבל", name_visible=True)
+code, shub = sa.j("post", "/api/hubs", json={"hub_type": "professional", "name": "כנס שיתוף"}); shid = shub["hub_id"]
+rb.j("post", "/api/contacts", json={"user_id": sa.j("get", "/api/me")[1]["user_id"]})
+sa.j("post", "/api/contacts", json={"user_id": rb.j("get", "/api/me")[1]["user_id"]})
+cid_rb = sa.j("get", "/api/contacts")[1][0]["id"]
+tiny = "data:image/jpeg;base64,/9j/4AAQSkZJRg=="
+code, r = sa.j("post", f"/api/hubs/{shid}/share", json={"contact_ids": [cid_rb], "images": [tiny, tiny]})
+t("share content as pictures", code == 200 and r["sent"] == 1, r)
+rows = rb.j("get", "/api/messages")[1]["conversations"]
+th = rb.j("get", f"/api/messages/thread/{rows[0]['user_id']}?limit=10")[1]["messages"]
+t("receiver gets link + pictures", len([m for m in th if m["image"]]) == 2 and any(m["hub_link_id"] == shid for m in th), th)
+pdf = "data:application/pdf;filename=generated.pdf;base64,JVBERi0xLjMK"
+code, r = sa.j("post", f"/api/hubs/{shid}/share", json={"contact_ids": [cid_rb], "file": pdf, "file_name": "דוח.pdf"})
+th = rb.j("get", f"/api/messages/thread/{rows[0]['user_id']}?limit=10")[1]["messages"]
+fm = [m for m in th if m["file_name"]]
+t("report file message", code == 200 and len(fm) == 1 and fm[0]["file_name"] == "דוח.pdf", th)
+rf = rb.c.get(f"/api/messages/{fm[0]['id']}/file")
+t("file download", rf.status_code == 200 and rf.data.startswith(b"%PDF") and "attachment" in rf.headers["Content-Disposition"])
+t("file download not for strangers", P("זר", "0551110003").c.get(f"/api/messages/{fm[0]['id']}/file").status_code in (401, 403, 404))
+# lock endpoint: with a password, /api/lock locks again
+lk = P("נועל", "0551110004"); lk.card(type="social", name="נועל", nickname="נועל", nickname_visible=True)
+lk.j("post", "/api/password", json={"password": "abc12345", "confirm": "abc12345"})
+t("unlocked after setting", lk.j("get", "/api/me")[1]["locked"] is False)
+lk.j("post", "/api/lock"); t("lock endpoint locks", lk.j("get", "/api/me")[1]["locked"] is True)
+t("index is not cached", lk.c.get("/").headers.get("Cache-Control", "").startswith("no-store"))
+# near with range
+code, nh = sa.j("post", "/api/hubs", json={"hub_type": "social", "name": "קרוב", "presence_mode": "location", "loc_lat": 32.0853, "loc_lng": 34.7818, "loc_radius": 100})
+near_ok = [h["name"] for h in rb.j("get", "/api/hubs?filter=near&lat=32.0853&lng=34.7860&range=1000")[1]]
+near_far = [h["name"] for h in rb.j("get", "/api/hubs?filter=near&lat=32.0853&lng=34.7860&range=200")[1]]
+t("near range 1km includes", "קרוב" in near_ok, near_ok); t("near range 200m excludes", "קרוב" not in near_far, near_far)
+t("near hides hubs without location", "כנס שיתוף" not in near_ok)
+# a professional hub can't be used with a social card
+rb.card(type="social", name="חברתי", nickname="חב", nickname_visible=True)
+social_id = [c for c in rb.j("get", "/api/cards")[1] if c["type"] == "social"][0]["id"]
+biz_id = [c for c in rb.j("get", "/api/cards")[1] if c["type"] == "business"][0]["id"]
+rb.j("post", f"/api/cards/{biz_id}/activate")
+rbs = rb.connect(); rbs.emit("join_hub", {"hub_id": shid}); rbs.get_received()
+code, e = rb.j("post", f"/api/cards/{social_id}/activate"); t("social card refused inside professional hub", code == 400 and "מקצועי" in e["error"], e)
+rbs.emit("leave_hub"); rbs.get_received()
+t("social card allowed after leaving", rb.j("post", f"/api/cards/{social_id}/activate")[0] == 200)
+# legacy group messages (no group id) join the group of the same name: one row
+g_owner = P("מנהל קבוצה", "0551110005"); g_owner.card(type="business", name="מנהל", name_visible=True)
+g_mem = P("חבר קבוצה", "0551110006"); g_mem.card(type="business", name="חבר", name_visible=True)
+g_mem.j("post", "/api/contacts", json={"user_id": g_owner.j("get", "/api/me")[1]["user_id"]})
+g_owner.j("post", "/api/contacts", json={"user_id": g_mem.j("get", "/api/me")[1]["user_id"]})
+gc = g_owner.j("get", "/api/contacts")[1][0]["id"]
+grp = g_owner.j("post", "/api/contact-groups", json={"name": "קבוצה ישנה"})[1]
+g_owner.j("post", f"/api/contact-groups/{grp['id']}/members", json={"contact_ids": [gc]})
+g_mem.j("post", f"/api/groups/{grp['id']}/respond", json={"accept": True})
+g_owner.j("post", f"/api/contact-groups/{grp['id']}/message", json={"text": "הודעה חדשה"})
+with app.app_context():
+    from models import PrivateMessage
+    for m in PrivateMessage.query.filter_by(kind="group").all():
+        m.group_id = None     # as if sent before groups had ids
+    db.session.commit()
+g_owner.j("post", "/api/messages/group-send", json={"group_id": grp["id"], "text": "אחרי"})
+grows = g_owner.j("get", "/api/messages/groups")[1]
+t("legacy + new group messages = one row", len([r for r in grows if r["group_name"] == "קבוצה ישנה"]) == 1, grows)
+gth = g_owner.j("get", f"/api/messages/group-thread?id={grp['id']}")[1]
+t("legacy messages shown in the group thread", len(gth["messages"]) >= 2, gth)
+
 # auto column migration on an old database
 import sqlite3, tempfile, subprocess
 tmp = tempfile.mktemp(suffix=".db")
@@ -448,5 +567,13 @@ res = subprocess.run([sys.executable, "-c", "import os;os.environ['DATABASE_URL'
                      cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))), capture_output=True, text=True)
 t("auto-migrate old db", res.returncode == 0 and "ישן space {} " in res.stdout.replace("False", "") + " ", res.stdout + res.stderr[-300:])
 os.remove(tmp)
+
+# 15ב.3: real event hub (Mare MED IV)
+t("event hub needs admin", _reg.j("post", "/api/admin/event-hub", json={})[0] == 403)
+code, er = _adm.j("post", "/api/admin/event-hub", json={})
+t("event hub created", code == 200 and er["hub"]["name"].startswith("Mare MED"), er)
+code, hv = _adm.j("get", "/api/hubs/" + er["hub"]["hub_id"] + "/full")
+t("event hub has 8 windows with images", code == 200 and len(hv.get("blocks", [])) == 8 and sum(1 for b in hv["blocks"] if b["image_url"]) >= 5, hv.get("blocks") and len(hv["blocks"]))
+t("event hub twice -> 409", _adm.j("post", "/api/admin/event-hub", json={})[0] == 409)
 print(ok, "pass", bad, "fail")
 sys.exit(1 if bad else 0)

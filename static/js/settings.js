@@ -7,6 +7,7 @@
     const lines = [
       ['sound_pm', 'צליל להודעה פרטית חדשה'], ['sound_hub_msg', 'צליל להודעה בלוח ההאב'],
       ['sound_hub_join', 'צליל כשמישהו מצטרף להאב'], ['sound_invite', 'צליל להזמנה להאב'],
+      ['sound_app_open', 'צליל בכניסה לאפליקציה'], ['sound_hub_enter', 'צליל בכניסה להאב'], ['sound_send', 'צליל בשליחת הודעה'],
     ];
     const body = H.el('<div></div>');
     body.innerHTML =
@@ -18,8 +19,12 @@
       '<div class="set-sec">אבטחה</div>' +
       '<div class="set-row"><div><div class="lb">סיסמת כניסה</div><div class="sub">' + (me.has_password ? 'מוגדרת — תידרש בכל פתיחה חדשה של האפליקציה. אין שחזור עצמי; במקרה שכחה יש לפנות למנהל.' : 'לא מוגדרת') + '</div></div>' +
       '<span style="display:flex;gap:6px"><button class="btn sm" id="stPw">' + (me.has_password ? 'שינוי' : 'הגדרה') + '</button>' + (me.has_password ? '<button class="btn sm danger" id="stPwDel">מחיקה</button>' : '') + '</span></div>' +
+      '<div class="set-sec">הדרכה</div><div class="set-row"><span class="lb">מצגת הדרכה: כניסה, כרטיס אישי, הודעות והעבודה בהאב</span><button class="btn sm" id="stTour">הפעלה</button></div>' +
       '<div class="set-sec">שפה</div>' +
       '<div class="set-row"><span class="lb">שפת האפליקציה</span><span style="display:flex;gap:6px"><button class="chip2 on" data-lang="he">עברית</button><button class="chip2" data-lang="en" style="opacity:.6">English</button></span></div>' +
+      (me.is_admin ? '<div class="set-sec">האבי דוגמה (מנהל)</div><div class="set-row"><div><div class="lb">9 האבים לדוגמה עם נרשמים אקראיים</div><div class="sub">3 מקצועיים, 3 עסקיים, 3 חברתיים. הם שלך, ויש לך בהם זכויות ניהול מלאות.</div></div><span style="display:flex;gap:6px"><button class="btn sm primary" id="stDemo">טען</button><button class="btn sm danger" id="stDemoDel">מחק</button></span></div>' : '') +
+      (me.is_admin ? '<div class="set-row"><div><div class="lb">האב אמיתי: Mare MED IV</div><div class="sub">כנס 13-15.10.2026 עם תוכנית, דוברים, חסויות ומפה. ההאב שלך עם זכויות ניהול.</div></div><button class="btn sm primary" id="stMare">צור האב</button></div>' : '') +
+      '<div class="set-sec">מידע משפטי</div><div class="set-row"><span class="lb">תנאי שימוש, הצהרת פיילוט ופרטיות</span><button class="btn sm" id="stTerms">קריאה</button></div>' +
       '<div class="set-sec">מנהל מערכת</div>' +
       '<div class="set-row"><span class="lb">' + (me.is_super ? 'מנהל-על פעיל במכשיר זה' : 'כניסת מנהל') + '</span><button class="btn sm" id="stSuper">' + (me.is_super ? 'סטטיסטיקה' : 'כניסה') + '</button></div>';
     const mod = H.modal({ title: 'הגדרות', body, actions: [{ label: 'סגור', cls: 'primary' }] });
@@ -32,6 +37,15 @@
       if (on) H.sound(b.dataset.sw.replace('sound_', ''));
     });
     H.$$('[data-lang]', body).forEach(b => b.onclick = () => { if (b.dataset.lang === 'en') H.toast('English will be available in a later version. האנגלית עדיין לא פעילה'); });
+    const dm = H.$('#stDemo', body);
+    if (dm) {
+      dm.onclick = async () => { dm.disabled = true; dm.textContent = 'טוען...'; try { const r = await H.post('/api/admin/demo', {}); H.toast('נוצרו ' + r.hubs.length + ' האבים לדוגמה'); mod.close(); H.go('home'); } catch (e) { H.toast(e.message, 6000); dm.disabled = false; dm.textContent = 'טען'; } };
+      H.$('#stDemoDel', body).onclick = async () => { if (!(await H.confirm('למחוק את כל האבי הדוגמה שלך (והנרשמים האקראיים)?', 'מחיקה', true))) return; try { const r = await H.del('/api/admin/demo'); H.toast('נמחקו ' + r.removed + ' האבים'); mod.close(); H.go('home'); } catch (e) { H.toast(e.message); } };
+    }
+    const mr = H.$('#stMare', body);
+    if (mr) mr.onclick = async () => { mr.disabled = true; try { await H.post('/api/admin/event-hub', {}); H.toast('ההאב Mare MED IV נוצר'); mod.close(); H.go('home'); } catch (e) { H.toast(e.message, 6000); mr.disabled = false; } };
+    H.$('#stTerms', body).onclick = () => H.showTerms();
+    H.$('#stTour', body).onclick = () => { mod.close(); H.tour(); };
     H.$('#stPw', body).onclick = () => { mod.close(); passwordDialog(); };
     const del = H.$('#stPwDel', body);
     if (del) del.onclick = async () => {
@@ -68,7 +82,7 @@
 
   H.routes.lock = async (p, root) => {
     const w = H.el(`<div class="screen"><div class="lock-wrap"><div class="glass login-card">
-      <img class="logo-full" src="/static/img/logo_full.png" alt="Hubble">
+      <img class="logo-full" src="/static/img/logo_full.png" alt="HUBIN">
       <h1>האפליקציה נעולה</h1><p class="lead">הזן את הסיסמה כדי להמשיך</p>
       <div class="row"><span class="ico">${H.ic('lock', 18)}</span><input type="password" id="lkPw" placeholder="סיסמה" autocomplete="current-password"></div>
       <div class="err" id="lkErr"></div><button class="btn primary lg block" id="lkGo">כניסה</button>
